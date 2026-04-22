@@ -156,18 +156,22 @@ jobs:
     name: IPFS Integration
     runs-on: ubuntu-latest
 
-    services:
-      ipfs:
-        image: ipfs/kubo:v0.32.1
-        ports:
-          - 55001:5001
-        options: >-
-          --health-cmd "wget -q --spider http://localhost:5001/api/v0/id || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-
     steps:
+      - name: Start Kubo IPFS
+        run: |
+          docker run -d --name ipfs \
+            -p 55001:5001 \
+            ipfs/kubo:v0.32.1
+
+          for i in {1..30}; do
+            if curl -sf -X POST http://localhost:55001/api/v0/id > /dev/null 2>&1; then
+              echo "IPFS is ready"
+              break
+            fi
+            echo "Waiting for IPFS... ($i/30)"
+            sleep 2
+          done
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -202,6 +206,15 @@ jobs:
             echo "Waiting for MinIO... ($i/30)"
             sleep 1
           done
+
+      - name: Create test bucket (public read+write)
+        run: |
+          docker run --rm --net=host \
+            -e MC_HOST_local=http://minioadmin:minioadmin@localhost:59000 \
+            minio/mc mb local/b3nd-inttest || true
+          docker run --rm --net=host \
+            -e MC_HOST_local=http://minioadmin:minioadmin@localhost:59000 \
+            minio/mc anonymous set public local/b3nd-inttest
 
       - name: Checkout code
         uses: actions/checkout@v4
