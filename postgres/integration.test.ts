@@ -10,7 +10,7 @@
 
 /// <reference lib="deno.ns" />
 
-import { Client } from "npm:pg";
+import { Client } from "pg";
 import { runSharedStoreSuite } from "../_testing/shared-store-suite.ts";
 import { PostgresStore } from "./store.ts";
 import { generatePostgresSchema } from "./schema.ts";
@@ -58,11 +58,9 @@ async function createPostgresExecutor(): Promise<SqlExecutor> {
     },
   };
 
-  // Initialize schema
+  // Initialize schema (execute as one statement — DDL contains $$ blocks)
   const ddl = generatePostgresSchema(TABLE_PREFIX);
-  for (const stmt of ddl.split(";").filter((s) => s.trim())) {
-    await executor.query(stmt);
-  }
+  await executor.query(ddl);
 
   return executor;
 }

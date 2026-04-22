@@ -185,21 +185,24 @@ jobs:
     name: S3 (MinIO) Integration
     runs-on: ubuntu-latest
 
-    services:
-      minio:
-        image: minio/minio:latest
-        ports:
-          - 59000:9000
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        options: >-
-          --health-cmd "mc ready local || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio \
+            -p 59000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+
+          for i in {1..30}; do
+            if curl -sf http://localhost:59000/minio/health/live > /dev/null 2>&1; then
+              echo "MinIO is ready"
+              break
+            fi
+            echo "Waiting for MinIO... ($i/30)"
+            sleep 1
+          done
+
       - name: Checkout code
         uses: actions/checkout@v4
 

@@ -25,11 +25,19 @@
   "imports": {
     "@bandeira-tech/b3nd-sdk": "jsr:@bandeira-tech/b3nd-sdk@0.9.4",
     "@bandeira-tech/b3nd-sdk/types": "jsr:@bandeira-tech/b3nd-sdk@0.9.4/types",
+    "pg": "npm:pg@8",
+    "mongodb": "npm:mongodb@6",
     "canonicalize": "npm:canonicalize@2.0.0",
     "@std/assert": "jsr:@std/assert@^1.0.15",
     "@std/fs": "jsr:@std/fs@1",
     "@std/path": "jsr:@std/path@1",
     "@db/sqlite": "jsr:@db/sqlite@0.12"
+  },
+  "lint": {
+    "exclude": ["localstorage", "indexeddb"],
+    "rules": {
+      "exclude": ["require-await", "no-import-prefix", "no-unversioned-import"]
+    }
   },
   "compilerOptions": {
     "strict": true,

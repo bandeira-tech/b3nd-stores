@@ -14,7 +14,7 @@ import { runSharedStoreSuite } from "../_testing/shared-store-suite.ts";
 import { FsStore } from "./store.ts";
 import type { FsExecutor } from "./mod.ts";
 
-function createFsExecutor(rootDir: string): FsExecutor {
+function createFsExecutor(_rootDir: string): FsExecutor {
   return {
     async readFile(path: string): Promise<string> {
       return await Deno.readTextFile(path);
