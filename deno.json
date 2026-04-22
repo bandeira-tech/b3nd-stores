@@ -1,0 +1,43 @@
+{
+  "name": "@bandeira-tech/b3nd-stores",
+  "version": "0.1.0",
+  "exports": {
+    "./postgres": "./postgres/mod.ts",
+    "./mongo": "./mongo/mod.ts",
+    "./sqlite": "./sqlite/mod.ts",
+    "./fs": "./fs/mod.ts",
+    "./ipfs": "./ipfs/mod.ts",
+    "./s3": "./s3/mod.ts",
+    "./elasticsearch": "./elasticsearch/mod.ts",
+    "./localstorage": "./localstorage/mod.ts",
+    "./indexeddb": "./indexeddb/mod.ts"
+  },
+  "imports": {
+    "@bandeira-tech/b3nd-sdk": "jsr:@bandeira-tech/b3nd-sdk@^0.8.1",
+    "@bandeira-tech/b3nd-sdk/types": "jsr:@bandeira-tech/b3nd-sdk@^0.8.1/types",
+    "@std/assert": "jsr:@std/assert@^1.0.15"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "lib": [
+      "ES2020",
+      "DOM",
+      "DOM.Iterable",
+      "deno.ns"
+    ]
+  },
+  "publish": {
+    "exclude": [
+      "node_modules/",
+      "dist/",
+      ".env*",
+      "*.test.ts",
+      "*.js",
+      "*.lock",
+      "package.json",
+      "package-lock.json",
+      "tsup.config.ts",
+      ".npmignore"
+    ]
+  }
+}
