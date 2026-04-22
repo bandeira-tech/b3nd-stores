@@ -12,10 +12,24 @@
     "./localstorage": "./localstorage/mod.ts",
     "./indexeddb": "./indexeddb/mod.ts"
   },
+  "tasks": {
+    "test": "deno test --allow-all --ignore=localstorage,indexeddb,postgres/integration.test.ts,mongo/integration.test.ts,sqlite/integration.test.ts,fs/integration.test.ts,ipfs/integration.test.ts,s3/integration.test.ts",
+    "check": "deno check postgres/mod.ts mongo/mod.ts sqlite/mod.ts fs/mod.ts ipfs/mod.ts s3/mod.ts elasticsearch/mod.ts",
+    "test:integration:postgres": "deno test --allow-all postgres/integration.test.ts",
+    "test:integration:mongo": "deno test --allow-all mongo/integration.test.ts",
+    "test:integration:sqlite": "deno test --allow-all sqlite/integration.test.ts",
+    "test:integration:fs": "deno test --allow-all fs/integration.test.ts",
+    "test:integration:ipfs": "deno test --allow-all ipfs/integration.test.ts",
+    "test:integration:s3": "deno test --allow-all s3/integration.test.ts"
+  },
   "imports": {
-    "@bandeira-tech/b3nd-sdk": "jsr:@bandeira-tech/b3nd-sdk@^0.8.1",
-    "@bandeira-tech/b3nd-sdk/types": "jsr:@bandeira-tech/b3nd-sdk@^0.8.1/types",
-    "@std/assert": "jsr:@std/assert@^1.0.15"
+    "@bandeira-tech/b3nd-sdk": "jsr:@bandeira-tech/b3nd-sdk@0.9.4",
+    "@bandeira-tech/b3nd-sdk/types": "jsr:@bandeira-tech/b3nd-sdk@0.9.4/types",
+    "canonicalize": "npm:canonicalize@2.0.0",
+    "@std/assert": "jsr:@std/assert@^1.0.15",
+    "@std/fs": "jsr:@std/fs@1",
+    "@std/path": "jsr:@std/path@1",
+    "@db/sqlite": "jsr:@db/sqlite@0.12"
   },
   "compilerOptions": {
     "strict": true,
