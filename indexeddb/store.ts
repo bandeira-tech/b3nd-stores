@@ -5,8 +5,6 @@
  * Uses IndexedDB for large-scale persistent browser storage.
  */
 
-/// <reference lib="dom" />
-
 import type {
   DeleteResult,
   ReadResult,
