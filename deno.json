@@ -25,8 +25,8 @@
     "build:npm": "deno run -A scripts/build-npm.ts"
   },
   "imports": {
-    "@bandeira-tech/b3nd-core": "jsr:@bandeira-tech/b3nd-core@^0.10.0",
-    "@bandeira-tech/b3nd-core/types": "jsr:@bandeira-tech/b3nd-core@^0.10.0/types",
+    "@bandeira-tech/b3nd-core": "jsr:@bandeira-tech/b3nd-core@^0.11.0",
+    "@bandeira-tech/b3nd-core/types": "jsr:@bandeira-tech/b3nd-core@^0.11.0/types",
     "pg": "npm:pg@8",
     "mongodb": "npm:mongodb@6",
     "canonicalize": "npm:canonicalize@2.0.0",
