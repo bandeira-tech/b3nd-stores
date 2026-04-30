@@ -1,6 +1,7 @@
 {
   "name": "@bandeira-tech/b3nd-stores",
-  "version": "0.1.0",
+  "version": "0.2.0",
+  "description": "B3nd persistent stores: postgres, mongo, sqlite, fs, ipfs, s3, elasticsearch, localstorage, indexeddb",
   "exports": {
     "./postgres": "./postgres/mod.ts",
     "./mongo": "./mongo/mod.ts",
@@ -20,11 +21,12 @@
     "test:integration:sqlite": "deno test --allow-all sqlite/integration.test.ts",
     "test:integration:fs": "deno test --allow-all fs/integration.test.ts",
     "test:integration:ipfs": "deno test --allow-all ipfs/integration.test.ts",
-    "test:integration:s3": "deno test --allow-all s3/integration.test.ts"
+    "test:integration:s3": "deno test --allow-all s3/integration.test.ts",
+    "build:npm": "deno run -A scripts/build-npm.ts"
   },
   "imports": {
-    "@bandeira-tech/b3nd-sdk": "jsr:@bandeira-tech/b3nd-sdk@0.9.4",
-    "@bandeira-tech/b3nd-sdk/types": "jsr:@bandeira-tech/b3nd-sdk@0.9.4/types",
+    "@bandeira-tech/b3nd-core": "jsr:@bandeira-tech/b3nd-core@^0.10.0",
+    "@bandeira-tech/b3nd-core/types": "jsr:@bandeira-tech/b3nd-core@^0.10.0/types",
     "pg": "npm:pg@8",
     "mongodb": "npm:mongodb@6",
     "canonicalize": "npm:canonicalize@2.0.0",

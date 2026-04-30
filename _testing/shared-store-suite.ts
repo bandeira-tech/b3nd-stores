@@ -19,7 +19,7 @@
 /// <reference lib="deno.ns" />
 
 import { assertEquals } from "jsr:@std/assert";
-import type { Store } from "@bandeira-tech/b3nd-sdk/types";
+import type { Store } from "@bandeira-tech/b3nd-core/types";
 
 /**
  * Factory and options for the shared Store test suite.

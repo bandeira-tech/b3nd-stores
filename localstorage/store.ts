@@ -13,7 +13,7 @@ import type {
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
-} from "@bandeira-tech/b3nd-sdk/types";
+} from "@bandeira-tech/b3nd-core/types";
 
 /** Wrap Uint8Array for JSON round-tripping through localStorage */
 function serializeData(data: unknown): unknown {

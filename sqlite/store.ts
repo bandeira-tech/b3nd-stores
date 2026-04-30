@@ -11,7 +11,7 @@
  *
  * @example
  * ```typescript
- * import { SqliteStore } from "@bandeira-tech/b3nd-sdk";
+ * import { SqliteStore } from "@bandeira-tech/b3nd-core";
  *
  * const store = new SqliteStore("myapp", executor);
  *
@@ -32,11 +32,11 @@ import type {
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
-} from "@bandeira-tech/b3nd-sdk/types";
+} from "@bandeira-tech/b3nd-core/types";
 import {
   decodeBinaryFromJson,
   encodeBinaryForJson,
-} from "@bandeira-tech/b3nd-sdk";
+} from "@bandeira-tech/b3nd-core";
 import type { SqliteExecutor } from "./mod.ts";
 
 export class SqliteStore implements Store {

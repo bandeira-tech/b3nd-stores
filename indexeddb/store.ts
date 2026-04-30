@@ -13,7 +13,7 @@ import type {
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
-} from "@bandeira-tech/b3nd-sdk/types";
+} from "@bandeira-tech/b3nd-core/types";
 
 interface StoredRecord {
   uri: string;

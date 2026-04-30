@@ -9,7 +9,7 @@
  *
  * @example
  * ```typescript
- * import { PostgresStore } from "@bandeira-tech/b3nd-sdk";
+ * import { PostgresStore } from "@bandeira-tech/b3nd-core";
  *
  * const store = new PostgresStore("myapp", executor);
  *
@@ -30,11 +30,11 @@ import type {
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
-} from "@bandeira-tech/b3nd-sdk/types";
+} from "@bandeira-tech/b3nd-core/types";
 import {
   decodeBinaryFromJson,
   encodeBinaryForJson,
-} from "@bandeira-tech/b3nd-sdk";
+} from "@bandeira-tech/b3nd-core";
 import type { SqlExecutor } from "./mod.ts";
 
 export class PostgresStore implements Store {

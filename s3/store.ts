@@ -9,7 +9,7 @@
  *
  * @example
  * ```typescript
- * import { S3Store } from "@bandeira-tech/b3nd-sdk";
+ * import { S3Store } from "@bandeira-tech/b3nd-core";
  *
  * const store = new S3Store("my-bucket", executor, "data/");
  *
@@ -30,11 +30,11 @@ import type {
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
-} from "@bandeira-tech/b3nd-sdk/types";
+} from "@bandeira-tech/b3nd-core/types";
 import {
   decodeBinaryFromJson,
   encodeBinaryForJson,
-} from "@bandeira-tech/b3nd-sdk";
+} from "@bandeira-tech/b3nd-core";
 import type { S3Executor } from "./mod.ts";
 
 /**

@@ -9,7 +9,7 @@
  *
  * @example
  * ```typescript
- * import { ElasticsearchStore } from "@bandeira-tech/b3nd-sdk";
+ * import { ElasticsearchStore } from "@bandeira-tech/b3nd-core";
  *
  * const store = new ElasticsearchStore("b3nd", executor);
  *
@@ -30,11 +30,11 @@ import type {
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
-} from "@bandeira-tech/b3nd-sdk/types";
+} from "@bandeira-tech/b3nd-core/types";
 import {
   decodeBinaryFromJson,
   encodeBinaryForJson,
-} from "@bandeira-tech/b3nd-sdk";
+} from "@bandeira-tech/b3nd-core";
 import type { ElasticsearchExecutor } from "./mod.ts";
 
 /**
