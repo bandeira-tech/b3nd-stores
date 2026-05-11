@@ -15,7 +15,7 @@
   },
   "tasks": {
     "test": "deno test --allow-all --ignore=localstorage,indexeddb,postgres/integration.test.ts,mongo/integration.test.ts,sqlite/integration.test.ts,fs/integration.test.ts,ipfs/integration.test.ts,s3/integration.test.ts",
-    "check": "deno check postgres/mod.ts mongo/mod.ts sqlite/mod.ts fs/mod.ts ipfs/mod.ts s3/mod.ts elasticsearch/mod.ts",
+    "check": "deno check _shared/mod.ts",
     "test:integration:postgres": "deno test --allow-all postgres/integration.test.ts",
     "test:integration:mongo": "deno test --allow-all mongo/integration.test.ts",
     "test:integration:sqlite": "deno test --allow-all sqlite/integration.test.ts",
@@ -25,8 +25,8 @@
     "build:npm": "deno run -A scripts/build-npm.ts"
   },
   "imports": {
-    "@bandeira-tech/b3nd-core": "jsr:@bandeira-tech/b3nd-core@^0.11.0",
-    "@bandeira-tech/b3nd-core/types": "jsr:@bandeira-tech/b3nd-core@^0.11.0/types",
+    "@bandeira-tech/b3nd-core": "jsr:@bandeira-tech/b3nd-core@^0.15.0",
+    "@bandeira-tech/b3nd-core/types": "jsr:@bandeira-tech/b3nd-core@^0.15.0/types",
     "pg": "npm:pg@8",
     "mongodb": "npm:mongodb@6",
     "canonicalize": "npm:canonicalize@2.0.0",
