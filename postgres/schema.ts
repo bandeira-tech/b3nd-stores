@@ -1,12 +1,14 @@
 /**
- * PostgreSQL schema utilities for b3nd
+ * PostgreSQL schema utilities for b3nd.
  *
- * This module provides functions to generate and manage PostgreSQL schema
- * for the b3nd storage system, following the design principles from AGENTS.md
+ * Generates DDL for the b3nd storage table. The schema is intentionally
+ * minimal: `uri` (PK) + `data` (JSONB) + timestamps. The `values`
+ * column that older revisions carried is gone — `StoreEntry` in
+ * b3nd-core@0.15 no longer has a `values` field.
  */
 
 /**
- * Generate PostgreSQL schema SQL with custom table prefix
+ * Generate PostgreSQL schema SQL with custom table prefix.
  *
  * @param tablePrefix - Prefix for table names (required, no default)
  * @returns SQL string for creating the schema
@@ -29,7 +31,6 @@ export function generatePostgresSchema(tablePrefix: string): string {
 -- Create ${tablePrefix}_data table for storing URI-based data
 CREATE TABLE IF NOT EXISTS ${tablePrefix}_data (
     uri VARCHAR(2048) PRIMARY KEY,
-    "values" JSONB NOT NULL DEFAULT '{}',
     data JSONB NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -61,7 +62,6 @@ SELECT
     uri,
     split_part(uri, '://', 1) as program,
     split_part(uri, '://', 2) as path,
-    "values",
     data,
     created_at,
     updated_at
@@ -92,7 +92,6 @@ export function generateCompleteSchemaSQL(options: SchemaInitOptions): string {
   let sql = generatePostgresSchema(tablePrefix);
 
   if (grantPermissions && databaseUser) {
-    // Validate database user name
     if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(databaseUser)) {
       throw new Error(
         "databaseUser must start with a letter and contain only letters, numbers, and underscores",
@@ -108,18 +107,9 @@ export function generateCompleteSchemaSQL(options: SchemaInitOptions): string {
 }
 
 /**
- * Extract schema version from SQL for migration tracking
- *
- * @param sql - Schema SQL string
- * @returns Version identifier
+ * Extract schema version from SQL for migration tracking.
+ * Placeholder — bump when the table shape changes.
  */
 export function extractSchemaVersion(_sql: string): string {
-  // Simple version extraction based on table structure hash
-  // In a real implementation, this could be more sophisticated
-  const crypto = globalThis.crypto;
-  if (crypto && crypto.subtle) {
-    // This would need to be async in real implementation
-    return "v1.0.0"; // Placeholder
-  }
-  return "v1.0.0";
+  return "v2.0.0";
 }

@@ -7,5 +7,5 @@
  */
 
 export { decodeBinaryFromJson, encodeBinaryForJson } from "./binary.ts";
-export { applyReadParams } from "./read.ts";
+export { applyReadParams, validateReadParams } from "./read.ts";
 export { dispatchRead, type ReadHandlers } from "./dispatch.ts";

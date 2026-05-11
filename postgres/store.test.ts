@@ -1,7 +1,6 @@
 /**
- * PostgresStore Tests
- *
- * Uses a mock SqlExecutor that simulates Postgres JSONB behavior.
+ * PostgresStore unit tests — runs the shared suite against an
+ * in-memory mock executor that simulates Postgres JSONB behavior.
  */
 
 /// <reference lib="deno.ns" />
@@ -11,79 +10,95 @@ import { PostgresStore } from "./store.ts";
 import type { SqlExecutor, SqlExecutorResult } from "./mod.ts";
 
 /**
- * In-memory SQL executor that simulates Postgres behavior.
- * Stores values/data as JSON strings (matching the INSERT path),
- * returns parsed objects on SELECT (matching Postgres JSONB behavior).
+ * In-memory SQL executor that simulates the subset of Postgres
+ * behavior `PostgresStore` relies on. JSON columns round-trip as
+ * parsed objects (mimicking JSONB).
  */
 function createMockSqlExecutor(): SqlExecutor {
-  const data = new Map<
-    string,
-    { uri: string; values: string; data: string }
-  >();
+  const data = new Map<string, { uri: string; data: string }>();
 
   const executor: SqlExecutor = {
-    query: async (
+    query: (
       sql: string,
       args?: unknown[],
     ): Promise<SqlExecutorResult> => {
-      const upper = sql.trim().toUpperCase();
+      const trimmed = sql.trim();
+      const upper = trimmed.toUpperCase();
 
-      // CREATE TABLE / DDL
-      if (upper.startsWith("CREATE")) {
-        return { rows: [], rowCount: 0 };
-      }
+      // DDL
+      if (upper.startsWith("CREATE")) return Promise.resolve({ rows: [] });
 
-      // SELECT 1 (health check)
+      // Health
       if (upper === "SELECT 1") {
-        return { rows: [{ "?column?": 1 }] };
+        return Promise.resolve({ rows: [{ "?column?": 1 }] });
       }
 
-      // INSERT ... ON CONFLICT (upsert)
-      // Args: [uri, data_json, values_json]
+      // Upsert: INSERT INTO X (uri, data) VALUES ($1, $2::jsonb) ON CONFLICT ...
       if (upper.startsWith("INSERT")) {
         const uri = args![0] as string;
         const dataJson = args![1] as string;
-        const valuesJson = args![2] as string;
-        data.set(uri, { uri, values: valuesJson, data: dataJson });
-        return { rows: [], rowCount: 1 };
+        data.set(uri, { uri, data: dataJson });
+        return Promise.resolve({ rows: [], rowCount: 1 });
       }
 
-      // SELECT with LIKE (list query)
-      if (upper.includes("LIKE")) {
+      // Count: SELECT COUNT(*)::int AS n FROM X WHERE uri LIKE $1 || '%' AND uri NOT LIKE $1 || '%/%'
+      if (upper.startsWith("SELECT COUNT(")) {
         const prefix = args![0] as string;
-        const rows = [...data.values()]
-          .filter((r) => r.uri.startsWith(prefix))
-          .map((r) => ({
-            uri: r.uri,
-            // Postgres returns JSONB as parsed objects
-            data: JSON.parse(r.data),
-            values: JSON.parse(r.values),
-          }));
-        return { rows };
+        const n = [...data.values()].filter((r) =>
+          r.uri.startsWith(prefix) && !r.uri.slice(prefix.length).includes("/")
+        ).length;
+        return Promise.resolve({ rows: [{ n }] });
       }
 
-      // SELECT (single read)
-      if (upper.startsWith("SELECT")) {
+      // ls: SELECT [uri | uri, data] FROM X WHERE uri LIKE $1 || '%' AND uri NOT LIKE $1 || '%/%' [ORDER BY uri [DESC]] [LIMIT $n OFFSET $m]
+      if (upper.includes("LIKE") && upper.includes("NOT LIKE")) {
+        const prefix = args![0] as string;
+        let rows = [...data.values()].filter((r) =>
+          r.uri.startsWith(prefix) && !r.uri.slice(prefix.length).includes("/")
+        );
+
+        if (upper.includes("ORDER BY URI")) {
+          const desc = upper.includes(" DESC");
+          rows = rows.sort((a, b) =>
+            desc ? b.uri.localeCompare(a.uri) : a.uri.localeCompare(b.uri)
+          );
+        }
+
+        // LIMIT $n OFFSET $m — args[1] and args[2] when present
+        if (upper.includes("LIMIT")) {
+          const limit = args![1] as number;
+          const offset = (args![2] as number) ?? 0;
+          rows = rows.slice(offset, offset + limit);
+        }
+
+        const selectsData = /SELECT\s+URI\s*,\s*DATA/.test(upper);
+        return Promise.resolve({
+          rows: rows.map((r) =>
+            selectsData
+              ? { uri: r.uri, data: JSON.parse(r.data) }
+              : { uri: r.uri }
+          ),
+        });
+      }
+
+      // Point read: SELECT data FROM X WHERE uri = $1
+      if (upper.startsWith("SELECT") && upper.includes("WHERE URI = $1")) {
         const uri = args![0] as string;
         const row = data.get(uri);
-        if (!row) return { rows: [] };
-        return {
-          rows: [{
-            // Postgres returns JSONB as parsed objects
-            data: JSON.parse(row.data),
-            values: JSON.parse(row.values),
-          }],
-        };
+        if (!row) return Promise.resolve({ rows: [] });
+        return Promise.resolve({
+          rows: [{ data: JSON.parse(row.data) }],
+        });
       }
 
-      // DELETE
+      // Delete
       if (upper.startsWith("DELETE")) {
         const uri = args![0] as string;
         data.delete(uri);
-        return { rows: [], rowCount: 1 };
+        return Promise.resolve({ rows: [], rowCount: 1 });
       }
 
-      return { rows: [] };
+      return Promise.resolve({ rows: [] });
     },
 
     transaction: async <T>(
@@ -97,8 +112,5 @@ function createMockSqlExecutor(): SqlExecutor {
 }
 
 runSharedStoreSuite("PostgresStore", {
-  create: () => {
-    const executor = createMockSqlExecutor();
-    return new PostgresStore("test", executor);
-  },
+  create: () => new PostgresStore("test", createMockSqlExecutor()),
 });
