@@ -1,45 +1,45 @@
 /**
  * ElasticsearchStore — Elasticsearch implementation of Store.
  *
- * Pure mechanical storage with no protocol awareness.
- * Write entries, read entries, delete entries. Observe is not supported.
+ * Pure mechanical storage with no protocol awareness. URIs are
+ * partitioned into one index per `protocol_hostname` pair, with the
+ * path as the document `_id`.
  *
- * Uses an injected ElasticsearchExecutor, keeping the SDK decoupled
- * from any specific Elasticsearch library.
- *
- * @example
- * ```typescript
- * import { ElasticsearchStore } from "@bandeira-tech/b3nd-core";
- *
- * const store = new ElasticsearchStore("b3nd", executor);
- *
- * await store.write([
- *   { uri: "mutable://app/config", values: {}, data: { theme: "dark" } },
- * ]);
- *
- * const results = await store.read(["mutable://app/config"]);
- * console.log(results[0]?.record?.data); // { theme: "dark" }
- * ```
+ * `fn=ls` / `fn=count` are pushed down via an ES regex query that
+ * enforces the shallow-direct-leaves contract: `<docPrefix>[^/]+`.
+ * Lucene regex queries are auto-anchored, so the pattern must match
+ * the full `_id`.
  */
 
 import type {
   DeleteResult,
-  ReadResult,
+  Output,
   StatusResult,
   Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
 } from "@bandeira-tech/b3nd-core/types";
+import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
 import {
   decodeBinaryFromJson,
+  dispatchRead,
   encodeBinaryForJson,
-} from "@bandeira-tech/b3nd-core";
+  validateReadParams,
+} from "../_shared/mod.ts";
 import type { ElasticsearchExecutor } from "./mod.ts";
+
+const STORE_NAME = "ElasticsearchStore";
+
+/** Escape characters that are special in Lucene regex syntax. */
+function escapeLuceneRegex(input: string): string {
+  return input.replace(/[.?+*|{}\[\]()"\\#@&<>~]/g, "\\$&");
+}
 
 /**
  * Parse a URI into an Elasticsearch index name and document ID.
- * `protocol://hostname/path` -> index: `prefix_protocol_hostname`, docId: `path`
+ * `protocol://hostname/path` → index: `prefix_protocol_hostname`,
+ * docId: `path` (without leading slash).
  */
 function uriToIndexAndDocId(
   uri: string,
@@ -48,14 +48,13 @@ function uriToIndexAndDocId(
   const url = new URL(uri);
   const protocol = url.protocol.replace(":", "");
   const hostname = url.hostname;
-  const index = `${indexPrefix}_${protocol}_${hostname}`;
-  const docId = url.pathname.substring(1);
-  return { index, docId };
+  return {
+    index: `${indexPrefix}_${protocol}_${hostname}`,
+    docId: url.pathname.substring(1),
+  };
 }
 
-/**
- * Reconstruct a URI from an Elasticsearch index name and document ID.
- */
+/** Reconstruct a URI from an index name + document ID. */
 function indexAndDocIdToUri(
   index: string,
   indexPrefix: string,
@@ -73,12 +72,8 @@ export class ElasticsearchStore implements Store {
   private readonly executor: ElasticsearchExecutor;
 
   constructor(indexPrefix: string, executor: ElasticsearchExecutor) {
-    if (!indexPrefix) {
-      throw new Error("indexPrefix is required");
-    }
-    if (!executor) {
-      throw new Error("executor is required");
-    }
+    if (!indexPrefix) throw new Error("indexPrefix is required");
+    if (!executor) throw new Error("executor is required");
 
     this.indexPrefix = indexPrefix;
     this.executor = executor;
@@ -91,14 +86,12 @@ export class ElasticsearchStore implements Store {
 
     for (const entry of entries) {
       try {
-        const encodedData = encodeBinaryForJson(entry.data);
         const { index, docId } = uriToIndexAndDocId(
           entry.uri,
           this.indexPrefix,
         );
         await this.executor.index(index, docId, {
-          values: entry.values,
-          data: encodedData,
+          data: encodeBinaryForJson(entry.data),
         });
         results.push({ success: true });
       } catch (err) {
@@ -114,71 +107,68 @@ export class ElasticsearchStore implements Store {
 
   // ── Read ─────────────────────────────────────────────────────────
 
-  async read<T = unknown>(uris: string[]): Promise<ReadResult<T>[]> {
-    const results: ReadResult<T>[] = [];
-
-    for (const uri of uris) {
-      if (uri.endsWith("/")) {
-        results.push(...await this._list<T>(uri));
-      } else {
-        results.push(await this._readOne<T>(uri));
-      }
-    }
-
-    return results;
+  read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
+    return dispatchRead<T>(urls, STORE_NAME, {
+      read: (p) => this._readOne(p.uri),
+      ls: (p) => this._ls(p),
+      count: (p) => this._count(p),
+    });
   }
 
-  private async _readOne<T = unknown>(uri: string): Promise<ReadResult<T>> {
-    try {
-      const { index, docId } = uriToIndexAndDocId(uri, this.indexPrefix);
-      const doc = await this.executor.get(index, docId);
-
-      if (!doc) {
-        return { success: false, error: `Not found: ${uri}` };
-      }
-
-      const values = (doc.values ?? {}) as Record<string, number>;
-      const decodedData = decodeBinaryFromJson(doc.data) as T;
-
-      return { success: true, record: { values, data: decodedData } };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
+  private async _readOne(uri: string): Promise<unknown> {
+    const { index, docId } = uriToIndexAndDocId(uri, this.indexPrefix);
+    const doc = await this.executor.get(index, docId);
+    if (!doc) return undefined;
+    return decodeBinaryFromJson(doc.data);
   }
 
-  private async _list<T = unknown>(uri: string): Promise<ReadResult<T>[]> {
-    try {
-      const { index, docId } = uriToIndexAndDocId(uri, this.indexPrefix);
-      const pathPrefix = docId;
+  private _leafQuery(docPrefix: string): Record<string, unknown> {
+    return {
+      regexp: {
+        _id: `${escapeLuceneRegex(docPrefix)}[^/]+`,
+      },
+    };
+  }
 
-      const searchResult = await this.executor.search(index, {
-        query: { prefix: { _id: pathPrefix } },
-        size: 10000,
-      });
+  private async _ls(parsed: ParsedUrl): Promise<Output[] | string[]> {
+    validateReadParams(parsed.params, STORE_NAME);
+    const { params } = parsed;
+    const format = params.format ?? "full";
+    const { index, docId } = uriToIndexAndDocId(parsed.uri, this.indexPrefix);
 
-      if (!searchResult.hits.length) {
-        return [];
-      }
-
-      const results: ReadResult<T>[] = [];
-      for (const hit of searchResult.hits) {
-        const hitUri = indexAndDocIdToUri(index, this.indexPrefix, hit._id);
-        const values = (hit._source.values ?? {}) as Record<string, number>;
-        const decodedData = decodeBinaryFromJson(hit._source.data) as T;
-        results.push({
-          success: true,
-          uri: hitUri,
-          record: { values, data: decodedData },
-        });
-      }
-
-      return results;
-    } catch (_error) {
-      return [];
+    const body: Record<string, unknown> = {
+      query: this._leafQuery(docId),
+    };
+    if (params.sortBy === "uri") {
+      body.sort = [{ _id: params.sortOrder === "desc" ? "desc" : "asc" }];
     }
+    if (params.limit !== undefined) {
+      const page = params.page ?? 1;
+      body.size = params.limit;
+      body.from = (page - 1) * params.limit;
+    } else {
+      body.size = 10_000;
+    }
+    if (format === "uris") body._source = false;
+
+    const result = await this.executor.search(index, body);
+    if (format === "uris") {
+      return result.hits.map((hit) =>
+        indexAndDocIdToUri(index, this.indexPrefix, hit._id)
+      );
+    }
+    return result.hits.map((hit): Output => [
+      indexAndDocIdToUri(index, this.indexPrefix, hit._id),
+      hit._source ? decodeBinaryFromJson(hit._source.data) : undefined,
+    ]);
+  }
+
+  private async _count(parsed: ParsedUrl): Promise<number> {
+    if (parsed.params.pattern !== undefined) {
+      throw new Error(`${STORE_NAME}: pattern filter not supported`);
+    }
+    const { index, docId } = uriToIndexAndDocId(parsed.uri, this.indexPrefix);
+    return await this.executor.count(index, { query: this._leafQuery(docId) });
   }
 
   // ── Delete ───────────────────────────────────────────────────────
@@ -189,7 +179,7 @@ export class ElasticsearchStore implements Store {
     for (const uri of uris) {
       try {
         const { index, docId } = uriToIndexAndDocId(uri, this.indexPrefix);
-        await this.executor.delete?.(index, docId);
+        await this.executor.delete(index, docId);
         results.push({ success: true });
       } catch (err) {
         results.push({
@@ -211,18 +201,20 @@ export class ElasticsearchStore implements Store {
         return {
           status: "unhealthy",
           message: "Elasticsearch cluster is not reachable",
+          fns: ["read", "ls", "count"],
         };
       }
-
       return {
         status: "healthy",
         message: "Elasticsearch store is operational",
+        fns: ["read", "ls", "count"],
         details: { indexPrefix: this.indexPrefix },
       };
     } catch (error) {
       return {
         status: "unhealthy",
         message: error instanceof Error ? error.message : String(error),
+        fns: ["read", "ls", "count"],
       };
     }
   }
