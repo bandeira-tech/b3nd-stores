@@ -14,7 +14,7 @@
     "./indexeddb": "./indexeddb/mod.ts"
   },
   "tasks": {
-    "test": "deno test --allow-all --ignore=postgres/integration.test.ts,mongo/integration.test.ts,sqlite/integration.test.ts,fs/integration.test.ts,ipfs/integration.test.ts,s3/integration.test.ts,elasticsearch/integration.test.ts,indexeddb/integration.test.ts",
+    "test": "deno test --allow-all --ignore=postgres/integration.test.ts,mongo/integration.test.ts,sqlite/integration.test.ts,fs/integration.test.ts,ipfs/integration.test.ts,s3/integration.test.ts,elasticsearch/integration.test.ts,indexeddb/integration.test.ts,localstorage/integration.test.ts",
     "check": "deno check _shared/mod.ts localstorage/mod.ts postgres/mod.ts mongo/mod.ts fs/mod.ts sqlite/mod.ts elasticsearch/mod.ts s3/mod.ts indexeddb/mod.ts ipfs/mod.ts",
     "test:integration:postgres": "deno test --allow-all postgres/integration.test.ts",
     "test:integration:mongo": "deno test --allow-all mongo/integration.test.ts",
@@ -24,6 +24,7 @@
     "test:integration:s3": "deno test --allow-all s3/integration.test.ts",
     "test:integration:elasticsearch": "deno test --allow-all elasticsearch/integration.test.ts",
     "test:integration:indexeddb": "deno test --allow-all indexeddb/integration.test.ts",
+    "test:integration:localstorage": "deno test --allow-all localstorage/integration.test.ts",
     "build:npm": "deno run -A scripts/build-npm.ts"
   },
   "imports": {
@@ -68,7 +69,9 @@
       "package-lock.json",
       "tsup.config.ts",
       ".npmignore",
-      "indexeddb/_browser/"
+      "indexeddb/_browser/",
+      "localstorage/_browser/",
+      "_testing/"
     ]
   }
 }

@@ -301,3 +301,34 @@ jobs:
 
       - name: Run IndexedDB browser integration tests
         run: deno task test:integration:indexeddb
+
+  localstorage-integration:
+    name: LocalStorage Browser Integration
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install Chromium runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+            libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
+            libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2t64 \
+            libatspi2.0-0
+
+      - name: Cache Astral Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/astral
+          key: astral-chromium-${{ runner.os }}
+
+      - name: Run LocalStorage browser integration tests
+        run: deno task test:integration:localstorage
