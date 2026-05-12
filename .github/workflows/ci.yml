@@ -230,3 +230,40 @@ jobs:
           S3_ACCESS_KEY: minioadmin
           S3_SECRET_KEY: minioadmin
         run: deno task test:integration:s3
+
+  elasticsearch-integration:
+    name: Elasticsearch Integration
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Start Elasticsearch
+        run: |
+          docker run -d --name elasticsearch \
+            -p 59200:9200 \
+            -e "discovery.type=single-node" \
+            -e "xpack.security.enabled=false" \
+            -e "ES_JAVA_OPTS=-Xms512m -Xmx512m" \
+            docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+
+          for i in {1..60}; do
+            status=$(curl -sf "http://localhost:59200/_cluster/health" | grep -o '"status":"[a-z]*"' || true)
+            if [[ "$status" == *"yellow"* || "$status" == *"green"* ]]; then
+              echo "Elasticsearch is ready ($status)"
+              break
+            fi
+            echo "Waiting for Elasticsearch... ($i/60)"
+            sleep 2
+          done
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Run Elasticsearch integration tests
+        env:
+          ES_ENDPOINT: http://localhost:59200
+        run: deno task test:integration:elasticsearch
