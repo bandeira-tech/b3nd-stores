@@ -101,9 +101,15 @@ function createS3Executor(): S3Executor {
   };
 }
 
+// Each test gets a unique key prefix so writes don't leak across the
+// shared bucket. The bucket itself stays — fresh in CI per workflow
+// run, and otherwise tolerant of leftover keys from prior runs.
+let testCount = 0;
+
 runSharedStoreSuite("S3Store (integration)", {
   create: () => {
     const executor = createS3Executor();
-    return new S3Store(BUCKET, executor);
+    const prefix = `inttest-${Date.now()}-${++testCount}/`;
+    return new S3Store(BUCKET, executor, prefix);
   },
 });
