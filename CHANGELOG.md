@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.4.0 — Absorb `MemoryStore`, Store→Client adapters, and the backend factory
+
+Cross-repo move from `@bandeira-tech/b3nd-core`. After this release,
+`b3nd-stores` is the single home for Store implementations _and_ the adapters
+that put them behind `ProtocolInterfaceNode`.
+
+### New exports
+
+- **`/memory`** — `MemoryStore`. Recursive in-memory reference Store. Tenth
+  backend; deliberately the only one not following the shallow ls/count contract
+  (see README).
+- **`/adapters`** — `SimpleClient`, `DataStoreClient`. The Store→Client adapter
+  classes formerly in `@bandeira-tech/b3nd-core`.
+- **`/factory`** — `createStoreFromUrl`, `createClientFromUrl`,
+  `createStoreResolver`, `createClientResolver`, `getSupportedProtocols`,
+  `BackendResolver`, `BackendFactoryOptions`, `StoreClientConstructor`. Backend
+  resolution by URL scheme. Built-in storage scheme: `memory://`. Transport
+  schemes (`https://`, `wss://`, `console://`) and the `SimpleClient` default
+  client wrapper still come from `@bandeira-tech/b3nd-core/...`.
+
+### Coordinated breaking change in `b3nd-core` (`@^0.16.0`)
+
+The same release removes `MemoryStore`, `SimpleClient`, `DataStoreClient`, and
+the backend factory from `@bandeira-tech/b3nd-core`. Anything that used to
+import them from core should now import them from
+`@bandeira-tech/b3nd-stores/{memory,adapters,factory}`.
+
+### Integration tests live here now
+
+Tests that exercise _framework + Store together_ (rig+memory dispatch,
+network/peer behaviour, the backend factory's URL resolution) moved from
+`b3nd-core` into `_integration/` here. They run alongside the unit suite. Core's
+own tests now use the new `RecordingClient` for dispatch-level verification.
+
 ## 0.3.0 — Store contract migration to `b3nd-core@0.15`
 
 **Breaking across every backend.** This release rewrites all nine stores against

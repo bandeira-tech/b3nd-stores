@@ -1,7 +1,7 @@
 {
   "name": "@bandeira-tech/b3nd-stores",
-  "version": "0.3.0",
-  "description": "B3nd persistent stores: postgres, mongo, sqlite, fs, ipfs, s3, elasticsearch, localstorage, indexeddb",
+  "version": "0.4.0",
+  "description": "B3nd stores: postgres, mongo, sqlite, fs, ipfs, s3, elasticsearch, localstorage, indexeddb, memory, plus the Store→Client adapters and backend factory",
   "exports": {
     "./postgres": "./postgres/mod.ts",
     "./mongo": "./mongo/mod.ts",
@@ -11,11 +11,14 @@
     "./s3": "./s3/mod.ts",
     "./elasticsearch": "./elasticsearch/mod.ts",
     "./localstorage": "./localstorage/mod.ts",
-    "./indexeddb": "./indexeddb/mod.ts"
+    "./indexeddb": "./indexeddb/mod.ts",
+    "./memory": "./memory/mod.ts",
+    "./adapters": "./_adapters/mod.ts",
+    "./factory": "./factory/mod.ts"
   },
   "tasks": {
     "test": "deno test --allow-all --ignore=postgres/integration.test.ts,mongo/integration.test.ts,sqlite/integration.test.ts,fs/integration.test.ts,ipfs/integration.test.ts,s3/integration.test.ts,elasticsearch/integration.test.ts,indexeddb/integration.test.ts,localstorage/integration.test.ts",
-    "check": "deno check _shared/mod.ts localstorage/mod.ts postgres/mod.ts mongo/mod.ts fs/mod.ts sqlite/mod.ts elasticsearch/mod.ts s3/mod.ts indexeddb/mod.ts ipfs/mod.ts",
+    "check": "deno check _shared/mod.ts localstorage/mod.ts postgres/mod.ts mongo/mod.ts fs/mod.ts sqlite/mod.ts elasticsearch/mod.ts s3/mod.ts indexeddb/mod.ts ipfs/mod.ts memory/mod.ts _adapters/mod.ts factory/mod.ts",
     "test:integration:postgres": "deno test --allow-all postgres/integration.test.ts",
     "test:integration:mongo": "deno test --allow-all mongo/integration.test.ts",
     "test:integration:sqlite": "deno test --allow-all sqlite/integration.test.ts",
@@ -28,8 +31,8 @@
     "build:npm": "deno run -A scripts/build-npm.ts"
   },
   "imports": {
-    "@bandeira-tech/b3nd-core": "jsr:@bandeira-tech/b3nd-core@^0.15.0",
-    "@bandeira-tech/b3nd-core/types": "jsr:@bandeira-tech/b3nd-core@^0.15.0/types",
+    "@bandeira-tech/b3nd-core": "jsr:@bandeira-tech/b3nd-core@^0.16.0",
+    "@bandeira-tech/b3nd-core/types": "jsr:@bandeira-tech/b3nd-core@^0.16.0/types",
     "pg": "npm:pg@8",
     "mongodb": "npm:mongodb@6",
     "canonicalize": "npm:canonicalize@2.0.0",
@@ -71,7 +74,8 @@
       ".npmignore",
       "indexeddb/_browser/",
       "localstorage/_browser/",
-      "_testing/"
+      "_testing/",
+      "_integration/"
     ]
   }
 }
