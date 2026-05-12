@@ -1,23 +1,34 @@
 /**
  * IndexedDBStore — browser IndexedDB implementation of Store.
  *
- * Pure mechanical storage with no protocol awareness.
- * Uses IndexedDB for large-scale persistent browser storage.
+ * Pure mechanical storage with no protocol awareness. Uses IndexedDB
+ * for large-scale persistent browser storage. IndexedDB's structured
+ * clone supports binary data natively, so `Uint8Array` round-trips
+ * without the `_shared/binary.ts` envelope.
+ *
+ * `fn=ls` / `fn=count` are shallow direct-leaves only: cursor over
+ * the `uri_index`, keep records whose URI is `prefix + <segment>`
+ * with no further `/`. The `format=uris` fast path and `count` only
+ * touch the index key — they never load the full record's `data`
+ * blob.
  */
 
 import type {
   DeleteResult,
-  ReadResult,
+  Output,
   StatusResult,
   Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
 } from "@bandeira-tech/b3nd-core/types";
+import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
+import { dispatchRead, validateReadParams } from "../_shared/mod.ts";
+
+const STORE_NAME = "IndexedDBStore";
 
 interface StoredRecord {
   uri: string;
-  values: Record<string, number>;
   data: unknown;
 }
 
@@ -52,7 +63,10 @@ interface IDBObjectStore {
 }
 
 interface IDBIndex {
-  openCursor(): IDBRequest;
+  // deno-lint-ignore no-explicit-any
+  openCursor(range?: any, direction?: "next" | "prev"): IDBRequest;
+  // deno-lint-ignore no-explicit-any
+  openKeyCursor(range?: any, direction?: "next" | "prev"): IDBRequest;
 }
 
 interface IDBRequest {
@@ -70,15 +84,24 @@ interface IDBOpenDBRequest extends IDBRequest {
   onupgradeneeded: ((this: IDBOpenDBRequest, ev: any) => void) | null;
 }
 
+interface IDBKeyRange {
+  // deno-lint-ignore no-explicit-any
+  bound(lower: any, upper: any, lowerOpen?: boolean, upperOpen?: boolean): any;
+}
+
 interface IDBFactory {
   open(name: string, version?: number): IDBOpenDBRequest;
 }
+
+// deno-lint-ignore no-explicit-any
+const idbKeyRange: IDBKeyRange | undefined = (globalThis as any).IDBKeyRange;
 
 export class IndexedDBStore implements Store {
   private readonly databaseName: string;
   private readonly storeName: string;
   private readonly version: number;
   private readonly indexedDB: IDBFactory;
+  private readonly keyRange: IDBKeyRange | undefined;
   private db: IDBDatabase | null = null;
 
   constructor(config: {
@@ -87,6 +110,8 @@ export class IndexedDBStore implements Store {
     version?: number;
     // deno-lint-ignore no-explicit-any
     indexedDB?: any;
+    // deno-lint-ignore no-explicit-any
+    IDBKeyRange?: any;
   } = {}) {
     this.databaseName = config.databaseName || "b3nd";
     this.storeName = config.storeName || "records";
@@ -94,26 +119,24 @@ export class IndexedDBStore implements Store {
     this.indexedDB = config.indexedDB ||
       // deno-lint-ignore no-explicit-any
       ((globalThis as any).indexedDB ?? null);
+    this.keyRange = config.IDBKeyRange ?? idbKeyRange;
 
     if (!this.indexedDB) {
       throw new Error("IndexedDB is not available in this environment");
     }
   }
 
-  private async initDB(): Promise<IDBDatabase> {
-    if (this.db) return this.db;
+  private initDB(): Promise<IDBDatabase> {
+    if (this.db) return Promise.resolve(this.db);
 
     return new Promise<IDBDatabase>((resolve, reject) => {
       const request = this.indexedDB.open(this.databaseName, this.version);
-
       request.onerror = () =>
         reject(new Error(`Failed to open IndexedDB: ${request.error}`));
-
       request.onsuccess = () => {
         this.db = request.result;
         resolve(request.result);
       };
-
       request.onupgradeneeded = () => {
         const db = request.result as IDBDatabase;
         if (!db.objectStoreNames.contains(this.storeName)) {
@@ -145,7 +168,6 @@ export class IndexedDBStore implements Store {
         try {
           const record: StoredRecord = {
             uri: entry.uri,
-            values: entry.values,
             data: entry.data,
           };
           await new Promise<void>((resolve, reject) => {
@@ -165,7 +187,6 @@ export class IndexedDBStore implements Store {
         }
       }
     } catch (err) {
-      // DB init failure — all fail
       for (const _ of entries) {
         results.push({
           success: false,
@@ -179,76 +200,130 @@ export class IndexedDBStore implements Store {
 
   // ── Read ─────────────────────────────────────────────────────────
 
-  async read<T = unknown>(uris: string[]): Promise<ReadResult<T>[]> {
-    const results: ReadResult<T>[] = [];
-
-    for (const uri of uris) {
-      if (uri.endsWith("/")) {
-        results.push(...await this._list<T>(uri));
-      } else {
-        results.push(await this._readOne<T>(uri));
-      }
-    }
-
-    return results;
+  read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
+    return dispatchRead<T>(urls, STORE_NAME, {
+      read: (p) => this._readOne(p.uri),
+      ls: (p) => this._ls(p),
+      count: (p) => this._count(p),
+    });
   }
 
-  private async _readOne<T>(uri: string): Promise<ReadResult<T>> {
+  private async _readOne(uri: string): Promise<unknown> {
     try {
       const store = await this.getStore();
-      return new Promise<ReadResult<T>>((resolve) => {
+      return await new Promise<unknown>((resolve) => {
         const request = store.get(uri);
         request.onsuccess = () => {
           const record = request.result as StoredRecord | undefined;
-          if (!record) {
-            resolve({ success: false, error: "Not found" });
-          } else {
-            resolve({
-              success: true,
-              record: { values: record.values, data: record.data as T },
-            });
-          }
+          resolve(record ? record.data : undefined);
         };
-        request.onerror = () =>
-          resolve({ success: false, error: `Read failed: ${request.error}` });
+        request.onerror = () => resolve(undefined);
       });
-    } catch (err) {
-      return {
-        success: false,
-        error: err instanceof Error ? err.message : "Read failed",
-      };
+    } catch {
+      return undefined;
     }
   }
 
-  private async _list<T>(uri: string): Promise<ReadResult<T>[]> {
-    try {
-      const store = await this.getStore();
-      const index = store.index("uri_index");
+  /**
+   * Open a cursor over the `uri_index` constrained to the prefix.
+   * Returns URIs (and optionally records) that are direct leaves
+   * under `prefixUri` — i.e. `prefixUri + <segment>` with no further
+   * `/`. Honours sortOrder and limit/page via cursor walking.
+   */
+  private async _walkLeaves(
+    parsed: ParsedUrl,
+    onlyUris: boolean,
+  ): Promise<Array<{ uri: string; data?: unknown }>> {
+    const { uri: prefix, params } = parsed;
+    const desc = params.sortBy === "uri" && params.sortOrder === "desc";
+    const direction = desc ? "prev" : "next";
+    const limit = params.limit;
+    const offset = limit !== undefined ? ((params.page ?? 1) - 1) * limit : 0;
 
-      return new Promise<ReadResult<T>[]>((resolve) => {
-        const results: ReadResult<T>[] = [];
-        const request = index.openCursor();
+    // Bound the cursor to `[prefix, prefix + ￿)` — both ends
+    // inclusive of the prefix, exclusive of anything past the high
+    // surrogate. Fall back to a full scan if IDBKeyRange isn't
+    // available in this environment.
+    const range = this.keyRange
+      ? this.keyRange.bound(prefix, prefix + "￿", false, false)
+      : undefined;
+
+    const store = await this.getStore();
+    const index = store.index("uri_index");
+
+    return await new Promise<Array<{ uri: string; data?: unknown }>>(
+      (resolve, reject) => {
+        const out: Array<{ uri: string; data?: unknown }> = [];
+        let skipped = 0;
+        const request = onlyUris
+          ? index.openKeyCursor(range, direction)
+          : index.openCursor(range, direction);
 
         request.onsuccess = () => {
           const cursor = request.result;
-          if (cursor) {
-            const record = cursor.value as StoredRecord;
-            if (record.uri.startsWith(uri)) {
-              results.push({
-                success: true,
-                uri: record.uri,
-                record: { values: record.values, data: record.data as T },
-              });
-            }
-            cursor.continue();
-          } else {
-            resolve(results);
+          if (!cursor) {
+            resolve(out);
+            return;
           }
+
+          const key = (onlyUris ? cursor.key : cursor.value.uri) as string;
+          if (!key.startsWith(prefix)) {
+            resolve(out);
+            return;
+          }
+          const tail = key.slice(prefix.length);
+          if (tail === "" || tail.includes("/")) {
+            cursor.continue();
+            return;
+          }
+
+          if (skipped < offset) {
+            skipped++;
+            cursor.continue();
+            return;
+          }
+
+          if (onlyUris) {
+            out.push({ uri: key });
+          } else {
+            out.push({ uri: key, data: cursor.value.data });
+          }
+
+          if (limit !== undefined && out.length >= limit) {
+            resolve(out);
+            return;
+          }
+          cursor.continue();
         };
-        request.onerror = () => resolve([]);
-      });
+        request.onerror = () =>
+          reject(request.error ?? new Error("Cursor failed"));
+      },
+    );
+  }
+
+  private async _ls(parsed: ParsedUrl): Promise<Output[] | string[]> {
+    validateReadParams(parsed.params, STORE_NAME);
+    const format = parsed.params.format ?? "full";
+    const onlyUris = format === "uris";
+
+    try {
+      const entries = await this._walkLeaves(parsed, onlyUris);
+      if (onlyUris) return entries.map((e) => e.uri);
+      return entries.map((e): Output => [e.uri, e.data]);
     } catch {
       return [];
+    }
+  }
+
+  private async _count(parsed: ParsedUrl): Promise<number> {
+    if (parsed.params.pattern !== undefined) {
+      throw new Error(`${STORE_NAME}: pattern filter not supported`);
+    }
+    try {
+      const entries = await this._walkLeaves(parsed, true);
+      return entries.length;
+    } catch {
+      return 0;
     }
   }
 
@@ -293,13 +368,22 @@ export class IndexedDBStore implements Store {
   async status(): Promise<StatusResult> {
     try {
       await this.initDB();
-      return { status: "healthy", schema: [] };
+      return {
+        status: "healthy",
+        schema: [],
+        fns: ["read", "ls", "count"],
+      };
     } catch {
-      return { status: "unhealthy", schema: [] };
+      return {
+        status: "unhealthy",
+        schema: [],
+        fns: ["read", "ls", "count"],
+      };
     }
   }
 
   capabilities(): StoreCapabilities {
-    return { atomicBatch: false, binaryData: false };
+    // IndexedDB structured clone handles Uint8Array natively.
+    return { atomicBatch: false, binaryData: true };
   }
 }
