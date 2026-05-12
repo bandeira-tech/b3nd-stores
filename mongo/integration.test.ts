@@ -43,9 +43,17 @@ function createMongoExecutor(): MongoExecutor {
       const doc = await collection.findOne(filter);
       return (doc ?? null) as Record<string, unknown> | null;
     },
-    async findMany(filter) {
-      const docs = await collection.find(filter).toArray();
+    async findMany(filter, options) {
+      let cursor = collection.find(filter);
+      if (options?.projection) cursor = cursor.project(options.projection);
+      if (options?.sort) cursor = cursor.sort(options.sort);
+      if (options?.skip !== undefined) cursor = cursor.skip(options.skip);
+      if (options?.limit !== undefined) cursor = cursor.limit(options.limit);
+      const docs = await cursor.toArray();
       return docs as Record<string, unknown>[];
+    },
+    async countDocuments(filter) {
+      return await collection.countDocuments(filter);
     },
     async deleteOne(filter) {
       const res = await collection.deleteOne(filter);

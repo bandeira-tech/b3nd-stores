@@ -1,45 +1,34 @@
 /**
  * MongoStore — MongoDB implementation of Store.
  *
- * Pure mechanical storage with no protocol awareness.
- * Write entries, read entries, delete entries. Observe is not supported.
- *
- * Uses an injected MongoExecutor, keeping the SDK decoupled from any
- * specific MongoDB driver.
- *
- * @example
- * ```typescript
- * import { MongoStore } from "@bandeira-tech/b3nd-core";
- *
- * const store = new MongoStore("myCollection", executor);
- *
- * await store.write([
- *   { uri: "mutable://app/config", values: {}, data: { theme: "dark" } },
- * ]);
- *
- * const results = await store.read(["mutable://app/config"]);
- * console.log(results[0]?.record?.data); // { theme: "dark" }
- * ```
+ * Pure mechanical storage with no protocol awareness. Uses an
+ * injected MongoExecutor so the package does not depend on a specific
+ * MongoDB driver. `fn=ls`/`fn=count` push down to a regex prefix
+ * query that enforces the shallow-direct-leaves contract:
+ * `^<prefix>[^/]+$`.
  */
 
 import type {
   DeleteResult,
-  ReadResult,
+  Output,
   StatusResult,
   Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
 } from "@bandeira-tech/b3nd-core/types";
+import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
 import {
   decodeBinaryFromJson,
+  dispatchRead,
   encodeBinaryForJson,
-} from "@bandeira-tech/b3nd-core";
+  validateReadParams,
+} from "../_shared/mod.ts";
 import type { MongoExecutor } from "./mod.ts";
 
-/**
- * Escape special regex characters in a string for safe use in a RegExp.
- */
+const STORE_NAME = "MongoStore";
+
+/** Escape special regex characters for safe use in a RegExp pattern. */
 function escapeRegex(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -49,12 +38,8 @@ export class MongoStore implements Store {
   private readonly executor: MongoExecutor;
 
   constructor(collectionName: string, executor: MongoExecutor) {
-    if (!collectionName) {
-      throw new Error("collectionName is required");
-    }
-    if (!executor) {
-      throw new Error("executor is required");
-    }
+    if (!collectionName) throw new Error("collectionName is required");
+    if (!executor) throw new Error("executor is required");
 
     this.collectionName = collectionName;
     this.executor = executor;
@@ -67,14 +52,12 @@ export class MongoStore implements Store {
 
     for (const entry of entries) {
       try {
-        const encodedData = encodeBinaryForJson(entry.data);
         await this.executor.updateOne(
           { uri: entry.uri },
           {
             $set: {
               uri: entry.uri,
-              values: entry.values,
-              data: encodedData,
+              data: encodeBinaryForJson(entry.data),
               updatedAt: new Date(),
             },
           },
@@ -94,71 +77,60 @@ export class MongoStore implements Store {
 
   // ── Read ─────────────────────────────────────────────────────────
 
-  async read<T = unknown>(uris: string[]): Promise<ReadResult<T>[]> {
-    const results: ReadResult<T>[] = [];
-
-    for (const uri of uris) {
-      if (uri.endsWith("/")) {
-        results.push(...await this._list<T>(uri));
-      } else {
-        results.push(await this._readOne<T>(uri));
-      }
-    }
-
-    return results;
+  read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
+    return dispatchRead<T>(urls, STORE_NAME, {
+      read: (p) => this._readOne(p.uri),
+      ls: (p) => this._ls(p),
+      count: (p) => this._count(p),
+    });
   }
 
-  private async _readOne<T = unknown>(uri: string): Promise<ReadResult<T>> {
-    try {
-      const doc = await this.executor.findOne({ uri });
-
-      if (!doc) {
-        return { success: false, error: `Not found: ${uri}` };
-      }
-
-      const decodedData = decodeBinaryFromJson(doc.data) as T;
-      const values = (doc.values ?? {}) as Record<string, number>;
-
-      return { success: true, record: { values, data: decodedData } };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
+  private async _readOne(uri: string): Promise<unknown> {
+    const doc = await this.executor.findOne({ uri });
+    if (!doc) return undefined;
+    return decodeBinaryFromJson(doc.data);
   }
 
-  private async _list<T = unknown>(uri: string): Promise<ReadResult<T>[]> {
-    try {
-      const prefix = uri.endsWith("/") ? uri : `${uri}/`;
-      const escapedPrefix = escapeRegex(prefix);
+  /** Build the shallow-direct-leaves regex filter for a prefix. */
+  private _leafFilter(prefixUri: string): Record<string, unknown> {
+    return { uri: { $regex: `^${escapeRegex(prefixUri)}[^/]+$` } };
+  }
 
-      const docs = await this.executor.findMany({
-        uri: { $regex: `^${escapedPrefix}` },
-      });
+  private async _ls(parsed: ParsedUrl): Promise<Output[] | string[]> {
+    validateReadParams(parsed.params, STORE_NAME);
+    const { params } = parsed;
+    const format = params.format ?? "full";
 
-      if (!docs.length) {
-        return [];
-      }
-
-      const results: ReadResult<T>[] = [];
-      for (const doc of docs) {
-        const docUri = typeof doc.uri === "string" ? doc.uri : undefined;
-        if (!docUri) continue;
-
-        const decodedData = decodeBinaryFromJson(doc.data) as T;
-        const values = (doc.values ?? {}) as Record<string, number>;
-        results.push({
-          success: true,
-          uri: docUri,
-          record: { values, data: decodedData },
-        });
-      }
-
-      return results;
-    } catch (_error) {
-      return [];
+    const options: Parameters<MongoExecutor["findMany"]>[1] = {};
+    if (params.sortBy === "uri") {
+      options.sort = { uri: params.sortOrder === "desc" ? -1 : 1 };
     }
+    if (params.limit !== undefined) {
+      const page = params.page ?? 1;
+      options.limit = params.limit;
+      options.skip = (page - 1) * params.limit;
+    }
+    if (format === "uris") {
+      options.projection = { uri: 1, _id: 0 };
+    }
+
+    const docs = await this.executor.findMany(
+      this._leafFilter(parsed.uri),
+      options,
+    );
+
+    if (format === "uris") return docs.map((d) => d.uri as string);
+    return docs.map((d): Output => [
+      d.uri as string,
+      decodeBinaryFromJson(d.data),
+    ]);
+  }
+
+  private async _count(parsed: ParsedUrl): Promise<number> {
+    if (parsed.params.pattern !== undefined) {
+      throw new Error(`${STORE_NAME}: pattern filter not supported`);
+    }
+    return await this.executor.countDocuments(this._leafFilter(parsed.uri));
   }
 
   // ── Delete ───────────────────────────────────────────────────────
@@ -168,7 +140,7 @@ export class MongoStore implements Store {
 
     for (const uri of uris) {
       try {
-        await this.executor.deleteOne?.({ uri });
+        await this.executor.deleteOne({ uri });
         results.push({ success: true });
       } catch (err) {
         results.push({
@@ -190,18 +162,20 @@ export class MongoStore implements Store {
         return {
           status: "unhealthy",
           message: "MongoDB ping failed",
+          fns: ["read", "ls", "count"],
         };
       }
-
       return {
         status: "healthy",
         message: "MongoDB store is operational",
+        fns: ["read", "ls", "count"],
         details: { collectionName: this.collectionName },
       };
     } catch (error) {
       return {
         status: "unhealthy",
         message: error instanceof Error ? error.message : String(error),
+        fns: ["read", "ls", "count"],
       };
     }
   }
