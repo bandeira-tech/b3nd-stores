@@ -2,12 +2,19 @@
  * Elasticsearch backend for b3nd.
  *
  * Store implementation backed by Elasticsearch. Requires an injected
- * ElasticsearchExecutor so the SDK does not depend on a specific ES client.
+ * ElasticsearchExecutor so the package does not depend on a specific
+ * ES client.
  */
 
 export interface ElasticsearchClientConfig {
   /** Index name prefix for b3nd data (e.g., "b3nd") */
   indexPrefix: string;
+}
+
+export interface ElasticsearchSearchResult {
+  hits: Array<
+    { _id: string; _source?: Record<string, unknown> }
+  >;
 }
 
 export interface ElasticsearchExecutor {
@@ -23,13 +30,15 @@ export interface ElasticsearchExecutor {
   search: (
     index: string,
     body: Record<string, unknown>,
-  ) => Promise<{
-    hits: Array<{ _id: string; _source: Record<string, unknown> }>;
-  }>;
-  delete?: (
+  ) => Promise<ElasticsearchSearchResult>;
+  /**
+   * Count documents matching a query. Maps to the ES `_count` endpoint.
+   */
+  count: (
     index: string,
-    id: string,
-  ) => Promise<void>;
+    body: Record<string, unknown>,
+  ) => Promise<number>;
+  delete: (index: string, id: string) => Promise<void>;
   ping: () => Promise<boolean>;
   cleanup?: () => Promise<void>;
 }
