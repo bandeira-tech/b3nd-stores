@@ -1,6 +1,6 @@
 {
   "name": "@bandeira-tech/b3nd-stores",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "B3nd persistent stores: postgres, mongo, sqlite, fs, ipfs, s3, elasticsearch, localstorage, indexeddb",
   "exports": {
     "./postgres": "./postgres/mod.ts",
@@ -14,7 +14,7 @@
     "./indexeddb": "./indexeddb/mod.ts"
   },
   "tasks": {
-    "test": "deno test --allow-all --ignore=indexeddb,ipfs,postgres/integration.test.ts,mongo/integration.test.ts,fs/integration.test.ts,s3/integration.test.ts,ipfs/integration.test.ts",
+    "test": "deno test --allow-all --ignore=postgres/integration.test.ts,mongo/integration.test.ts,sqlite/integration.test.ts,fs/integration.test.ts,ipfs/integration.test.ts,s3/integration.test.ts",
     "check": "deno check _shared/mod.ts localstorage/mod.ts postgres/mod.ts mongo/mod.ts fs/mod.ts sqlite/mod.ts elasticsearch/mod.ts s3/mod.ts indexeddb/mod.ts ipfs/mod.ts",
     "test:integration:postgres": "deno test --allow-all postgres/integration.test.ts",
     "test:integration:mongo": "deno test --allow-all mongo/integration.test.ts",
