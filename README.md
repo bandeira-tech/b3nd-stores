@@ -128,13 +128,15 @@ Throws on `pattern`, `cursor`, unknown `sortBy`, and unknown `format`.
 ## Testing
 
 - `deno task test` — runs every store's unit suite (32 tests each) against an
-  in-memory mock.
-- `deno task test:integration:{postgres,mongo,sqlite,fs,ipfs,s3}` — runs the
-  same 32 tests against real backends (started in CI; locally requires the
-  matching service).
+  in-memory mock, plus the adapter and factory tests and the `_integration/`
+  framework+memory integration suite.
+- `deno task test:integration:{postgres,mongo,sqlite,fs,ipfs,s3,elasticsearch}`
+  — runs the same 32 tests against real backends. Started in CI; locally
+  requires the matching service running on the conventional port.
+- `deno task test:integration:{indexeddb,localstorage}` — runs the suites inside
+  a real headless Chromium via Astral + esbuild. Astral downloads its own
+  Chromium on first run.
 - `deno task check`, `deno lint`, `deno fmt --check .` — type/lint/format gates.
-
-No integration tests for elasticsearch, localstorage, or indexeddb yet.
 
 ## License
 
