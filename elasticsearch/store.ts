@@ -90,8 +90,15 @@ export class ElasticsearchStore implements Store {
           entry.uri,
           this.indexPrefix,
         );
+        // We mirror docId into a `path` source field so `ls`/`count`
+        // can run analyzed queries against it — ES 8 disallows
+        // `regexp` (and prefix/wildcard) against the `_id` metadata
+        // field. ES's default dynamic mapping for a string source
+        // field produces `path` (text) + `path.keyword` (keyword);
+        // we target `path.keyword` for exact-match regex push-down.
         await this.executor.index(index, docId, {
           data: encodeBinaryForJson(entry.data),
+          path: docId,
         });
         results.push({ success: true });
       } catch (err) {
@@ -125,7 +132,7 @@ export class ElasticsearchStore implements Store {
   private _leafQuery(docPrefix: string): Record<string, unknown> {
     return {
       regexp: {
-        _id: `${escapeLuceneRegex(docPrefix)}[^/]+`,
+        "path.keyword": `${escapeLuceneRegex(docPrefix)}[^/]+`,
       },
     };
   }
@@ -140,7 +147,10 @@ export class ElasticsearchStore implements Store {
       query: this._leafQuery(docId),
     };
     if (params.sortBy === "uri") {
-      body.sort = [{ _id: params.sortOrder === "desc" ? "desc" : "asc" }];
+      // Sort on the keyword subfield, same reason as the query above.
+      body.sort = [{
+        "path.keyword": params.sortOrder === "desc" ? "desc" : "asc",
+      }];
     }
     if (params.limit !== undefined) {
       const page = params.page ?? 1;

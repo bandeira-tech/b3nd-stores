@@ -14,27 +14,43 @@ import type {
   ElasticsearchSearchResult,
 } from "./mod.ts";
 
+/**
+ * Match a Lucene-style regexp against a doc's `path` source field
+ * (which mirrors `_id` — see the matching write-side change in
+ * store.ts). Anchored on both ends because Lucene regex queries
+ * are implicitly full-match.
+ */
 function matchQuery(
   query: Record<string, unknown> | undefined,
-  docId: string,
+  source: Record<string, unknown>,
 ): boolean {
   if (!query) return true;
-  const regexp = (query as { regexp?: { _id: string } }).regexp;
+  const regexp = (query as { regexp?: Record<string, string> }).regexp;
   if (regexp) {
-    // Lucene regex queries are implicitly anchored (full match).
-    const re = new RegExp(`^${regexp._id}$`);
-    return re.test(docId);
+    const field = Object.keys(regexp)[0];
+    if (!field) return true;
+    const fieldKey = field.replace(/\.keyword$/, "");
+    const value = source[fieldKey] as string | undefined;
+    if (value === undefined) return false;
+    const re = new RegExp(`^${regexp[field]}$`);
+    return re.test(value);
   }
   return true;
 }
 
 function applySort(
   entries: Array<[string, Record<string, unknown>]>,
-  sort: Array<{ _id: "asc" | "desc" }> | undefined,
+  sort: Array<Record<string, "asc" | "desc">> | undefined,
 ): Array<[string, Record<string, unknown>]> {
-  if (!sort?.[0]?._id) return entries;
-  const dir = sort[0]._id === "desc" ? -1 : 1;
-  return [...entries].sort(([a], [b]) => a.localeCompare(b) * dir);
+  const spec = sort?.[0];
+  if (!spec) return entries;
+  const field = Object.keys(spec)[0];
+  if (!field) return entries;
+  const fieldKey = field.replace(/\.keyword$/, "");
+  const dir = spec[field] === "desc" ? -1 : 1;
+  return [...entries].sort(([, a], [, b]) =>
+    String(a[fieldKey] ?? "").localeCompare(String(b[fieldKey] ?? "")) * dir
+  );
 }
 
 function createMockElasticsearchExecutor(): ElasticsearchExecutor {
@@ -56,12 +72,16 @@ function createMockElasticsearchExecutor(): ElasticsearchExecutor {
     search: (index, body) => {
       const idx = getIndex(index);
       const query = body.query as Record<string, unknown> | undefined;
-      const sort = body.sort as Array<{ _id: "asc" | "desc" }> | undefined;
+      const sort = body.sort as
+        | Array<Record<string, "asc" | "desc">>
+        | undefined;
       const from = (body.from as number) ?? 0;
       const size = (body.size as number) ?? 10_000;
       const sourceOff = body._source === false;
 
-      let entries = [...idx.entries()].filter(([id]) => matchQuery(query, id));
+      let entries = [...idx.entries()].filter(([, source]) =>
+        matchQuery(query, source)
+      );
       entries = applySort(entries, sort);
       entries = entries.slice(from, from + size);
 
@@ -74,7 +94,8 @@ function createMockElasticsearchExecutor(): ElasticsearchExecutor {
     count: (index, body) => {
       const idx = getIndex(index);
       const query = body.query as Record<string, unknown> | undefined;
-      const n = [...idx.keys()].filter((id) => matchQuery(query, id)).length;
+      const n =
+        [...idx.values()].filter((source) => matchQuery(query, source)).length;
       return Promise.resolve(n);
     },
 
