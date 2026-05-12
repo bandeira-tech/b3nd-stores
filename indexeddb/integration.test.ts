@@ -90,7 +90,16 @@ async function startServer(
 }
 
 async function runInBrowser(url: string): Promise<BrowserTestResult[]> {
-  const browser = await launch({ headless: true });
+  // GitHub-Actions runners can't host Chromium's SUID sandbox (no
+  // user namespaces available in their kernel), so we disable it.
+  // `--disable-dev-shm-usage` works around the tiny /dev/shm that
+  // containerised runners ship — Chromium falls back to /tmp.
+  // Both flags are safe here: the only thing we load is our own
+  // bundle off localhost.
+  const browser = await launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-dev-shm-usage"],
+  });
   try {
     const page = await browser.newPage(url);
     // Wait until the bundled harness has finished its top-level
