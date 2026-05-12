@@ -14,7 +14,7 @@
     "./indexeddb": "./indexeddb/mod.ts"
   },
   "tasks": {
-    "test": "deno test --allow-all --ignore=postgres/integration.test.ts,mongo/integration.test.ts,sqlite/integration.test.ts,fs/integration.test.ts,ipfs/integration.test.ts,s3/integration.test.ts,elasticsearch/integration.test.ts",
+    "test": "deno test --allow-all --ignore=postgres/integration.test.ts,mongo/integration.test.ts,sqlite/integration.test.ts,fs/integration.test.ts,ipfs/integration.test.ts,s3/integration.test.ts,elasticsearch/integration.test.ts,indexeddb/integration.test.ts",
     "check": "deno check _shared/mod.ts localstorage/mod.ts postgres/mod.ts mongo/mod.ts fs/mod.ts sqlite/mod.ts elasticsearch/mod.ts s3/mod.ts indexeddb/mod.ts ipfs/mod.ts",
     "test:integration:postgres": "deno test --allow-all postgres/integration.test.ts",
     "test:integration:mongo": "deno test --allow-all mongo/integration.test.ts",
@@ -23,6 +23,7 @@
     "test:integration:ipfs": "deno test --allow-all ipfs/integration.test.ts",
     "test:integration:s3": "deno test --allow-all s3/integration.test.ts",
     "test:integration:elasticsearch": "deno test --allow-all elasticsearch/integration.test.ts",
+    "test:integration:indexeddb": "deno test --allow-all indexeddb/integration.test.ts",
     "build:npm": "deno run -A scripts/build-npm.ts"
   },
   "imports": {
@@ -35,7 +36,10 @@
     "@std/fs": "jsr:@std/fs@1",
     "@std/path": "jsr:@std/path@1",
     "@db/sqlite": "jsr:@db/sqlite@0.12",
-    "fake-indexeddb": "npm:fake-indexeddb@5"
+    "fake-indexeddb": "npm:fake-indexeddb@5",
+    "@astral/astral": "jsr:@astral/astral@^0.5.3",
+    "@luca/esbuild-deno-loader": "jsr:@luca/esbuild-deno-loader@^0.11.1",
+    "esbuild": "npm:esbuild@^0.24.0"
   },
   "lint": {
     "exclude": [],
@@ -63,7 +67,8 @@
       "package.json",
       "package-lock.json",
       "tsup.config.ts",
-      ".npmignore"
+      ".npmignore",
+      "indexeddb/_browser/"
     ]
   }
 }
