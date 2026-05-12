@@ -1,59 +1,47 @@
 /**
  * S3Store — Amazon S3 implementation of Store.
  *
- * Pure mechanical storage with no protocol awareness.
- * Write entries, read entries, delete entries. Observe is not supported.
+ * Pure mechanical storage with no protocol awareness. One S3 object
+ * per entry. Object body is the encoded payload at the top level —
+ * the legacy `{ values, data }` envelope is gone with the
+ * `StoreEntry.values` field in b3nd-core@0.15.
  *
- * Uses an injected S3Executor, keeping the SDK decoupled from any
- * specific S3 library.
- *
- * @example
- * ```typescript
- * import { S3Store } from "@bandeira-tech/b3nd-core";
- *
- * const store = new S3Store("my-bucket", executor, "data/");
- *
- * await store.write([
- *   { uri: "mutable://app/config", values: {}, data: { theme: "dark" } },
- * ]);
- *
- * const results = await store.read(["mutable://app/config"]);
- * console.log(results[0]?.record?.data); // { theme: "dark" }
- * ```
+ * `fn=ls` / `fn=count` are shallow direct-leaves only: list objects
+ * under the URI's key prefix, then filter to keys whose remainder
+ * contains no further `/`. The `format=uris` fast path returns the
+ * URIs without issuing `getObject`; `format=full` only fetches the
+ * selected page.
  */
 
 import type {
   DeleteResult,
-  ReadResult,
+  Output,
   StatusResult,
   Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
 } from "@bandeira-tech/b3nd-core/types";
+import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
 import {
   decodeBinaryFromJson,
+  dispatchRead,
   encodeBinaryForJson,
-} from "@bandeira-tech/b3nd-core";
+  validateReadParams,
+} from "../_shared/mod.ts";
 import type { S3Executor } from "./mod.ts";
 
-/**
- * Convert a URI to an S3 object key segment.
- * `protocol://host/path` becomes `protocol_host/path`.
- */
+const STORE_NAME = "S3Store";
+
+/** `protocol://host/path` → `protocol_host/path`. */
 function uriToKey(uri: string): string {
   return uri.replace("://", "_").replace(/^\//, "");
 }
 
-/**
- * Convert an S3 object key back to a URI.
- * Strips optional prefix and `.json` extension, then restores `://`.
- */
-function keyToUri(key: string, prefix?: string): string {
-  let k = key;
-  if (prefix) k = k.substring(prefix.length);
-  if (k.endsWith(".json")) k = k.substring(0, k.length - 5);
-  return k.replace("_", "://");
+/** Inverse of `uriToKey` with `.json` suffix stripping. */
+function keyTailToUri(tail: string): string {
+  const noExt = tail.endsWith(".json") ? tail.slice(0, -5) : tail;
+  return noExt.replace("_", "://");
 }
 
 export class S3Store implements Store {
@@ -62,12 +50,8 @@ export class S3Store implements Store {
   private readonly prefix: string;
 
   constructor(bucket: string, executor: S3Executor, prefix?: string) {
-    if (!bucket) {
-      throw new Error("bucket is required");
-    }
-    if (!executor) {
-      throw new Error("executor is required");
-    }
+    if (!bucket) throw new Error("bucket is required");
+    if (!executor) throw new Error("executor is required");
 
     this.bucket = bucket;
     this.executor = executor;
@@ -81,13 +65,12 @@ export class S3Store implements Store {
 
     for (const entry of entries) {
       try {
-        const encodedData = encodeBinaryForJson(entry.data);
-        const body = JSON.stringify({
-          values: entry.values,
-          data: encodedData,
-        });
-        const key = this.resolveKey(entry.uri);
-        await this.executor.putObject(key, body, "application/json");
+        const body = JSON.stringify(encodeBinaryForJson(entry.data));
+        await this.executor.putObject(
+          this._resolveKey(entry.uri),
+          body,
+          "application/json",
+        );
         results.push({ success: true });
       } catch (err) {
         results.push({
@@ -102,79 +85,69 @@ export class S3Store implements Store {
 
   // ── Read ─────────────────────────────────────────────────────────
 
-  async read<T = unknown>(uris: string[]): Promise<ReadResult<T>[]> {
-    const results: ReadResult<T>[] = [];
-
-    for (const uri of uris) {
-      if (uri.endsWith("/")) {
-        results.push(...await this._list<T>(uri));
-      } else {
-        results.push(await this._readOne<T>(uri));
-      }
-    }
-
-    return results;
+  read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
+    return dispatchRead<T>(urls, STORE_NAME, {
+      read: (p) => this._readOne(p.uri),
+      ls: (p) => this._ls(p),
+      count: (p) => this._count(p),
+    });
   }
 
-  private async _readOne<T = unknown>(uri: string): Promise<ReadResult<T>> {
+  private async _readOne(uri: string): Promise<unknown> {
+    const content = await this.executor.getObject(this._resolveKey(uri));
+    if (content === null) return undefined;
     try {
-      const key = this.resolveKey(uri);
-      const content = await this.executor.getObject(key);
-
-      if (content === null) {
-        return { success: false, error: `Not found: ${uri}` };
-      }
-
-      const record = JSON.parse(content) as {
-        values?: Record<string, number>;
-        data: unknown;
-      };
-      const decodedData = decodeBinaryFromJson(record.data) as T;
-
-      return {
-        success: true,
-        record: { values: record.values ?? {}, data: decodedData },
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }
-
-  private async _list<T = unknown>(uri: string): Promise<ReadResult<T>[]> {
-    try {
-      const keyPrefix = `${this.prefix}${uriToKey(uri)}`;
-      const keys = await this.executor.listObjects(keyPrefix);
-
-      const results: ReadResult<T>[] = [];
-      for (const k of keys.filter((k) => k.endsWith(".json"))) {
-        const itemUri = keyToUri(k, this.prefix);
-
-        const content = await this.executor.getObject(k);
-        if (content !== null) {
-          try {
-            const record = JSON.parse(content) as {
-              values?: Record<string, number>;
-              data: unknown;
-            };
-            const decodedData = decodeBinaryFromJson(record.data) as T;
-            results.push({
-              success: true,
-              uri: itemUri,
-              record: { values: record.values ?? {}, data: decodedData },
-            });
-          } catch {
-            // Skip malformed records
-          }
-        }
-      }
-
-      return results;
+      return decodeBinaryFromJson(JSON.parse(content));
     } catch {
-      return [];
+      return undefined;
     }
+  }
+
+  /** List direct-child URIs under a prefix (no recursion into sub-prefixes). */
+  private async _listChildUris(prefixUri: string): Promise<string[]> {
+    const keyPrefix = `${this.prefix}${uriToKey(prefixUri)}`;
+    const keys = await this.executor.listObjects(keyPrefix);
+    const uris: string[] = [];
+    for (const key of keys) {
+      if (!key.endsWith(".json")) continue;
+      const tail = key.slice(keyPrefix.length);
+      if (tail.includes("/")) continue; // nested, not a direct leaf
+      uris.push(`${prefixUri}${keyTailToUri(tail)}`);
+    }
+    return uris;
+  }
+
+  private async _ls(parsed: ParsedUrl): Promise<Output[] | string[]> {
+    validateReadParams(parsed.params, STORE_NAME);
+    const { params } = parsed;
+    const format = params.format ?? "full";
+
+    let uris = await this._listChildUris(parsed.uri);
+
+    if (params.sortBy === "uri") {
+      const dir = params.sortOrder === "desc" ? -1 : 1;
+      uris = [...uris].sort((a, b) => a.localeCompare(b) * dir);
+    }
+    if (params.limit !== undefined) {
+      const page = params.page ?? 1;
+      const start = (page - 1) * params.limit;
+      uris = uris.slice(start, start + params.limit);
+    }
+
+    if (format === "uris") return uris;
+
+    const out: Output[] = [];
+    for (const uri of uris) {
+      out.push([uri, await this._readOne(uri)]);
+    }
+    return out;
+  }
+
+  private async _count(parsed: ParsedUrl): Promise<number> {
+    if (parsed.params.pattern !== undefined) {
+      throw new Error(`${STORE_NAME}: pattern filter not supported`);
+    }
+    return (await this._listChildUris(parsed.uri)).length;
   }
 
   // ── Delete ───────────────────────────────────────────────────────
@@ -184,8 +157,7 @@ export class S3Store implements Store {
 
     for (const uri of uris) {
       try {
-        const key = this.resolveKey(uri);
-        await this.executor.deleteObject(key);
+        await this.executor.deleteObject(this._resolveKey(uri));
         results.push({ success: true });
       } catch (err) {
         results.push({
@@ -207,12 +179,13 @@ export class S3Store implements Store {
         return {
           status: "unhealthy",
           message: `Bucket not accessible: ${this.bucket}`,
+          fns: ["read", "ls", "count"],
         };
       }
-
       return {
         status: "healthy",
         message: "S3 store is operational",
+        fns: ["read", "ls", "count"],
         details: {
           bucket: this.bucket,
           prefix: this.prefix || "(none)",
@@ -222,6 +195,7 @@ export class S3Store implements Store {
       return {
         status: "unhealthy",
         message: error instanceof Error ? error.message : String(error),
+        fns: ["read", "ls", "count"],
       };
     }
   }
@@ -233,7 +207,7 @@ export class S3Store implements Store {
     };
   }
 
-  private resolveKey(uri: string): string {
+  private _resolveKey(uri: string): string {
     return `${this.prefix}${uriToKey(uri)}.json`;
   }
 }
