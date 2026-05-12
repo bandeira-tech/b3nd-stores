@@ -1,7 +1,8 @@
 # @bandeira-tech/b3nd-stores
 
-Persistent `Store` implementations for the B3nd framework. One package, nine
-backends, one uniform contract:
+`Store` implementations for the B3nd framework — plus the Store→Client adapters
+(`SimpleClient`, `DataStoreClient`) and the URL-based backend factory. One
+package, ten backends, one uniform contract:
 
 ```ts
 interface Store {
@@ -14,14 +15,15 @@ interface Store {
 ```
 
 `Store` is **mechanical storage** with no protocol awareness — write, read,
-delete by uri. Wrap a Store with a protocol client (`SimpleClient`,
-`DataStoreClient`, etc.) from `@bandeira-tech/b3nd-core` to get a
-`ProtocolInterfaceNode`.
+delete by uri. Wrap it with one of the adapters in
+`@bandeira-tech/b3nd-stores/adapters` (`SimpleClient`, `DataStoreClient`) to get
+a `ProtocolInterfaceNode`.
 
 ## Backends
 
 | Backend       | Import                                     | Executor                               | Push-down                                       |
 | ------------- | ------------------------------------------ | -------------------------------------- | ----------------------------------------------- |
+| Memory        | `@bandeira-tech/b3nd-stores/memory`        | none                                   | recursive `_walk` (deep) — see notes            |
 | PostgreSQL    | `@bandeira-tech/b3nd-stores/postgres`      | inject any `pg`-style executor         | `ls` / `count` via `LIKE … AND NOT LIKE …%/%`   |
 | SQLite        | `@bandeira-tech/b3nd-stores/sqlite`        | inject any `@db/sqlite`-style executor | same as Postgres                                |
 | MongoDB       | `@bandeira-tech/b3nd-stores/mongo`         | inject a `MongoExecutor`               | regex filter `^<prefix>[^/]+$`                  |
@@ -31,6 +33,23 @@ delete by uri. Wrap a Store with a protocol client (`SimpleClient`,
 | IPFS          | `@bandeira-tech/b3nd-stores/ipfs`          | inject an `IpfsExecutor`               | in-memory `uri → CID` index                     |
 | LocalStorage  | `@bandeira-tech/b3nd-stores/localstorage`  | injects browser `Storage`              | flat key scan                                   |
 | IndexedDB     | `@bandeira-tech/b3nd-stores/indexeddb`     | injects `indexedDB` / `IDBKeyRange`    | bounded cursor with early termination           |
+
+> **Memory ls/count semantics differ.** Every other backend in this package
+> implements `fn=ls` / `fn=count` as _shallow direct-leaves only_. `MemoryStore`
+> walks recursively (deep) — it predates the shallow convention and is kept that
+> way as the canonical reference for the rig backend factory and as a
+> deterministic stand-in for tests. If you need shallow semantics in-memory,
+> layer a thin shallow-only wrapper over a `Map`.
+
+## Adapters and factory
+
+- **`@bandeira-tech/b3nd-stores/adapters`** — `SimpleClient` and
+  `DataStoreClient`. These wrap any `Store` to produce a `ProtocolInterfaceNode`
+  that a `Rig` can talk to.
+- **`@bandeira-tech/b3nd-stores/factory`** — `createStoreFromUrl`,
+  `createClientFromUrl`, and resolver factories. Maps URL schemes (`memory://`,
+  plus your registered backends, plus core's transport schemes
+  `https://`/`wss://`/`console://`) to Stores or clients.
 
 ## Quick start (Postgres)
 
