@@ -8,8 +8,7 @@
 /// <reference lib="deno.ns" />
 
 import { ensureDir } from "@std/fs/ensure-dir";
-import { walk } from "@std/fs/walk";
-import { dirname, relative } from "@std/path";
+import { dirname } from "@std/path";
 import { runSharedStoreSuite } from "../_testing/shared-store-suite.ts";
 import { FsStore } from "./store.ts";
 import type { FsExecutor } from "./mod.ts";
@@ -39,17 +38,13 @@ function createFsExecutor(_rootDir: string): FsExecutor {
     },
 
     async listFiles(dir: string): Promise<string[]> {
+      const files: string[] = [];
       try {
-        await Deno.stat(dir);
+        for await (const entry of Deno.readDir(dir)) {
+          if (entry.isFile) files.push(entry.name);
+        }
       } catch {
         return [];
-      }
-
-      const files: string[] = [];
-      for await (
-        const entry of walk(dir, { includeFiles: true, includeDirs: false })
-      ) {
-        files.push(relative(dir, entry.path));
       }
       return files;
     },

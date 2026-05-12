@@ -1,46 +1,42 @@
 /**
  * FsStore — Filesystem implementation of Store.
  *
- * Pure mechanical storage with no protocol awareness.
- * Write entries as JSON files, read them back, delete them.
- * Observe is not supported.
+ * Pure mechanical storage with no protocol awareness. Writes one JSON
+ * file per entry; the file body is the encoded payload at the top
+ * level (no envelope, no `values` field — those left the contract in
+ * b3nd-core@0.15).
  *
- * Uses an injected FsExecutor so the SDK does not depend on a specific
- * filesystem API (Node fs, Deno, etc.).
- *
- * @example
- * ```typescript
- * import { FsStore } from "@bandeira-tech/b3nd-core";
- *
- * const store = new FsStore("/data/store", executor);
- *
- * await store.write([
- *   { uri: "mutable://app/config", values: {}, data: { theme: "dark" } },
- * ]);
- *
- * const results = await store.read(["mutable://app/config"]);
- * console.log(results[0]?.record?.data); // { theme: "dark" }
- * ```
+ * `fn=ls` / `fn=count` are shallow direct-leaves only: they list the
+ * `.json` files directly inside the prefix's mapped directory, never
+ * recursing into subdirectories.
  */
 
 import type {
   DeleteResult,
-  ReadResult,
+  Output,
   StatusResult,
   Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
 } from "@bandeira-tech/b3nd-core/types";
+import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
 import {
   decodeBinaryFromJson,
+  dispatchRead,
   encodeBinaryForJson,
-} from "@bandeira-tech/b3nd-core";
+  validateReadParams,
+} from "../_shared/mod.ts";
 import type { FsExecutor } from "./mod.ts";
+
+const STORE_NAME = "FsStore";
 
 /**
  * Convert a URI to a relative filesystem path.
  * `protocol://host/path` becomes `protocol_host/path.json`.
+ *
+ * Only the FIRST `://` is rewritten — embedded `://` (rare but legal
+ * in protocol-tunneling uris) stays in the path.
  */
 function uriToRelPath(uri: string): string {
   return uri.replace("://", "_") + ".json";
@@ -60,12 +56,8 @@ export class FsStore implements Store {
   private readonly executor: FsExecutor;
 
   constructor(rootDir: string, executor: FsExecutor) {
-    if (!rootDir) {
-      throw new Error("rootDir is required");
-    }
-    if (!executor) {
-      throw new Error("executor is required");
-    }
+    if (!rootDir) throw new Error("rootDir is required");
+    if (!executor) throw new Error("executor is required");
 
     this.rootDir = rootDir.replace(/\/+$/, "");
     this.executor = executor;
@@ -78,13 +70,8 @@ export class FsStore implements Store {
 
     for (const entry of entries) {
       try {
-        const encodedData = encodeBinaryForJson(entry.data);
-        const body = JSON.stringify({
-          values: entry.values,
-          data: encodedData,
-        });
-        const filePath = this.resolvePath(entry.uri);
-        await this.executor.writeFile(filePath, body);
+        const body = JSON.stringify(encodeBinaryForJson(entry.data));
+        await this.executor.writeFile(this._resolvePath(entry.uri), body);
         results.push({ success: true });
       } catch (err) {
         results.push({
@@ -99,63 +86,80 @@ export class FsStore implements Store {
 
   // ── Read ─────────────────────────────────────────────────────────
 
-  async read<T = unknown>(uris: string[]): Promise<ReadResult<T>[]> {
-    const results: ReadResult<T>[] = [];
-
-    for (const uri of uris) {
-      if (uri.endsWith("/")) {
-        results.push(...await this._list<T>(uri));
-      } else {
-        results.push(await this._readOne<T>(uri));
-      }
-    }
-
-    return results;
+  read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
+    return dispatchRead<T>(urls, STORE_NAME, {
+      read: (p) => this._readOne(p.uri),
+      ls: (p) => this._ls(p),
+      count: (p) => this._count(p),
+    });
   }
 
-  private async _readOne<T>(uri: string): Promise<ReadResult<T>> {
+  private async _readOne(uri: string): Promise<unknown> {
     try {
-      const filePath = this.resolvePath(uri);
-      const content = await this.executor.readFile(filePath);
-      const record = JSON.parse(content) as {
-        values?: Record<string, number>;
-        data: unknown;
-      };
-      const decodedData = decodeBinaryFromJson(record.data) as T;
-
-      return {
-        success: true,
-        record: { values: record.values ?? {}, data: decodedData },
-      };
+      const content = await this.executor.readFile(this._resolvePath(uri));
+      return decodeBinaryFromJson(JSON.parse(content));
     } catch {
-      return { success: false, error: `Not found: ${uri}` };
+      return undefined;
     }
   }
 
-  private async _list<T>(uri: string): Promise<ReadResult<T>[]> {
+  /** Resolve the on-disk directory that holds the direct leaves of `prefixUri`. */
+  private _dirForPrefix(prefixUri: string): string {
+    const rel = uriToRelPath(prefixUri).replace(/\.json$/, "").replace(
+      /\/+$/,
+      "",
+    );
+    return rel ? `${this.rootDir}/${rel}` : this.rootDir;
+  }
+
+  /** List direct-child URIs under a prefix (no recursion). */
+  private async _listChildUris(prefixUri: string): Promise<string[]> {
+    let files: string[];
     try {
-      const relDir = uriToRelPath(uri).replace(/\.json$/, "").replace(
-        /\/+$/,
-        "",
-      );
-      const dirPath = `${this.rootDir}/${relDir}`;
-
-      const files = await this.executor.listFiles(dirPath);
-
-      const results: ReadResult<T>[] = [];
-      for (const f of files.filter((f) => f.endsWith(".json"))) {
-        const fullRel = `${relDir}/${f}`;
-        const childUri = relPathToUri(fullRel);
-        const result = await this._readOne<T>(childUri);
-        if (result.success) {
-          results.push({ ...result, uri: childUri });
-        }
-      }
-
-      return results;
+      files = await this.executor.listFiles(this._dirForPrefix(prefixUri));
     } catch {
       return [];
     }
+    const relDir = uriToRelPath(prefixUri).replace(/\.json$/, "").replace(
+      /\/+$/,
+      "",
+    );
+    return files
+      .filter((f) => f.endsWith(".json") && !f.includes("/"))
+      .map((f) => relPathToUri(`${relDir}/${f}`));
+  }
+
+  private async _ls(parsed: ParsedUrl): Promise<Output[] | string[]> {
+    validateReadParams(parsed.params, STORE_NAME);
+    const { params } = parsed;
+    const format = params.format ?? "full";
+
+    let uris = await this._listChildUris(parsed.uri);
+
+    if (params.sortBy === "uri") {
+      const dir = params.sortOrder === "desc" ? -1 : 1;
+      uris = [...uris].sort((a, b) => a.localeCompare(b) * dir);
+    }
+    if (params.limit !== undefined) {
+      const page = params.page ?? 1;
+      const start = (page - 1) * params.limit;
+      uris = uris.slice(start, start + params.limit);
+    }
+
+    if (format === "uris") return uris;
+
+    const out: Output[] = [];
+    for (const uri of uris) {
+      out.push([uri, await this._readOne(uri)]);
+    }
+    return out;
+  }
+
+  private async _count(parsed: ParsedUrl): Promise<number> {
+    if (parsed.params.pattern !== undefined) {
+      throw new Error(`${STORE_NAME}: pattern filter not supported`);
+    }
+    return (await this._listChildUris(parsed.uri)).length;
   }
 
   // ── Delete ───────────────────────────────────────────────────────
@@ -165,11 +169,11 @@ export class FsStore implements Store {
 
     for (const uri of uris) {
       try {
-        const filePath = this.resolvePath(uri);
-        await this.executor.removeFile(filePath);
+        await this.executor.removeFile(this._resolvePath(uri));
         results.push({ success: true });
       } catch {
-        // File may not exist — succeed silently
+        // File may not exist — succeed silently (matches the
+        // miss-is-not-an-error convention)
         results.push({ success: true });
       }
     }
@@ -186,17 +190,20 @@ export class FsStore implements Store {
         return {
           status: "unhealthy",
           message: `Root directory not found: ${this.rootDir}`,
+          fns: ["read", "ls", "count"],
         };
       }
-
       return {
         status: "healthy",
         message: "Filesystem store is operational",
+        fns: ["read", "ls", "count"],
+        details: { rootDir: this.rootDir },
       };
     } catch (error) {
       return {
         status: "unhealthy",
         message: error instanceof Error ? error.message : String(error),
+        fns: ["read", "ls", "count"],
       };
     }
   }
@@ -208,7 +215,7 @@ export class FsStore implements Store {
     };
   }
 
-  private resolvePath(uri: string): string {
+  private _resolvePath(uri: string): string {
     return `${this.rootDir}/${uriToRelPath(uri)}`;
   }
 }
