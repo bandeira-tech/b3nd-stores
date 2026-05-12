@@ -7,28 +7,32 @@
  *   createClientFromUrl(url, options)  → ProtocolInterfaceNode
  *
  * createStoreFromUrl is the primitive — it maps a URL to a Store.
- * createClientFromUrl wraps that Store with a client class.
+ * createClientFromUrl wraps that Store with a client class
+ * (defaults to `SimpleClient`).
  *
- * Built-in protocols (always available, no registration needed):
+ * Built-in storage protocols (always available, no registration needed):
  *   memory://             → MemoryStore
- *   https:// | http://    → HttpClient
- *   wss:// | ws://        → WebSocketClient
- *   console://            → ConsoleClient (write-only sink, no storage)
  *
- * External backends are registered via BackendResolver[]:
- *   postgresql://, mongodb://, sqlite://, file://, grpc://, etc.
+ * External backends register via BackendResolver[]:
+ *   postgresql://, mongodb://, sqlite://, file://, etc.
  *
- * For gRPC support, see `@bandeira-tech/b3nd-servers/grpc/client` —
- * instantiate `GrpcClient` directly or wire it through a custom resolver.
+ * **Transport protocols are out of scope.** The factory does not
+ * handle `http://`, `ws://`, `console://`, or `grpc://` URLs. Those
+ * produce *transport clients* (live in `@bandeira-tech/b3nd-servers`
+ * and `@bandeira-tech/b3nd-core/client-console`), not Stores; they
+ * have no consistent factory pattern across schemes. Construct them
+ * directly:
+ *
+ *   new HttpClient({ url })                      // b3nd-servers/http/client
+ *   new WebSocketClient({ url })                 // b3nd-servers/ws/client
+ *   new ConsoleClient(label)                     // b3nd-core/client-console
+ *   new GrpcHttpClient({ url })                  // b3nd-servers/grpc/http/client
  */
 
 import type {
   ProtocolInterfaceNode,
   Store,
 } from "@bandeira-tech/b3nd-core/types";
-import { HttpClient } from "@bandeira-tech/b3nd-core/client-http";
-import { WebSocketClient } from "@bandeira-tech/b3nd-core/client-ws";
-import { ConsoleClient } from "@bandeira-tech/b3nd-core/client-console";
 import { MemoryStore } from "../memory/store.ts";
 import { SimpleClient } from "../_adapters/simple-client.ts";
 
@@ -58,26 +62,8 @@ export interface BackendResolver {
   resolve: (url: string) => Promise<Store> | Store;
 }
 
-/** Built-in transport protocols (no Store — return clients directly). */
-const TRANSPORT_PROTOCOLS = new Set([
-  "https:",
-  "http:",
-  "wss:",
-  "ws:",
-  "console:",
-]);
-
 /** Built-in storage protocols (always available). */
 const BUILTIN_STORAGE_PROTOCOLS = ["memory://"];
-
-/** Built-in transport protocol prefixes. */
-const BUILTIN_TRANSPORT_PROTOCOLS = [
-  "https://",
-  "http://",
-  "wss://",
-  "ws://",
-  "console://",
-];
 
 export interface BackendFactoryOptions {
   backends?: BackendResolver[];
@@ -89,16 +75,13 @@ export type StoreClientConstructor = new (
 ) => ProtocolInterfaceNode;
 
 /**
- * Returns the list of supported backend URL protocols, derived dynamically
- * from built-in protocols plus any registered backends.
+ * Returns the list of supported storage URL protocols, derived
+ * dynamically from built-ins plus any registered backends.
  */
 export function getSupportedProtocols(
   backends: BackendResolver[] = [],
 ): readonly string[] {
-  const protocols = [
-    ...BUILTIN_TRANSPORT_PROTOCOLS,
-    ...BUILTIN_STORAGE_PROTOCOLS,
-  ];
+  const protocols = [...BUILTIN_STORAGE_PROTOCOLS];
   for (const b of backends) {
     for (const p of b.protocols) {
       const prefix = p.endsWith(":") ? p + "//" : p;
@@ -113,10 +96,8 @@ export function getSupportedProtocols(
 // ── Storage protocols (URL → Store) ─────────────────────────────────
 
 /**
- * Create a Store from a URL string.
- *
- * Works for storage protocols only (memory + registered backends).
- * Transport protocols (http, ws) throw — use createClientFromUrl instead.
+ * Create a Store from a URL string. Storage protocols only.
+ * Throws if the URL's protocol isn't a registered storage backend.
  */
 export async function createStoreFromUrl(
   url: string,
@@ -124,13 +105,6 @@ export async function createStoreFromUrl(
 ): Promise<Store> {
   const parsed = new URL(url);
   const protocol = parsed.protocol;
-
-  if (TRANSPORT_PROTOCOLS.has(protocol)) {
-    throw new Error(
-      `"${protocol}" is a transport protocol with no Store. ` +
-        `Use createClientFromUrl() for HTTP/WebSocket backends.`,
-    );
-  }
 
   // Built-in: memory
   if (protocol === "memory:") {
@@ -147,29 +121,31 @@ export async function createStoreFromUrl(
 
   const supported = getSupportedProtocols(backends);
   throw new Error(
-    `Unsupported backend URL protocol: "${protocol}". ` +
-      `Supported: ${supported.join(", ")}`,
+    `Unsupported storage URL protocol: "${protocol}". ` +
+      `Supported: ${supported.join(", ")}. ` +
+      `Transport URLs (http://, ws://, console://, grpc://) are not ` +
+      `handled by this factory — construct those clients directly ` +
+      `from @bandeira-tech/b3nd-servers/* or @bandeira-tech/b3nd-core/client-console.`,
   );
 }
 
 // ── Client from URL ─────────────────────────────────────────────────
 
 /**
- * Create a ProtocolInterfaceNode client from a URL string.
+ * Create a ProtocolInterfaceNode client from a *storage* URL string —
+ * the factory resolves the URL to a Store and wraps it with the given
+ * client class (defaults to SimpleClient).
  *
- * For storage protocols: creates a Store, wraps with the given client class
- * (defaults to SimpleClient).
- *
- * For transport protocols (http, ws): returns the transport client directly
- * (client arg is ignored — there's no Store to wrap).
+ * Transport URLs (http://, ws://, etc.) are out of scope — construct
+ * those clients directly from b3nd-servers / b3nd-core.
  */
 export async function createClientFromUrl(
   url: string,
   options?: BackendFactoryOptions & { client?: StoreClientConstructor },
 ): Promise<ProtocolInterfaceNode>;
 /**
- * Create a ProtocolInterfaceNode client from a URL string with a specific
- * client class.
+ * Create a ProtocolInterfaceNode client from a storage URL string
+ * with a specific client class.
  */
 export async function createClientFromUrl(
   url: string,
@@ -187,35 +163,15 @@ export async function createClientFromUrl(
   let options: BackendFactoryOptions;
 
   if (typeof clientOrOptions === "function") {
-    // createClientFromUrl(url, Client, options?)
     ClientClass = clientOrOptions;
     options = maybeOptions ?? {};
   } else {
-    // createClientFromUrl(url, options?)
     const opts = clientOrOptions ?? {};
     ClientClass = (opts as { client?: StoreClientConstructor }).client ??
       SimpleClient;
     options = opts;
   }
 
-  const parsed = new URL(url);
-  const protocol = parsed.protocol;
-
-  // Transport protocols — return client directly (no Store)
-  switch (protocol) {
-    case "https:":
-    case "http:":
-      return new HttpClient({ url });
-    case "wss:":
-    case "ws:":
-      return new WebSocketClient({ url });
-    case "console:": {
-      const label = parsed.hostname || "b3nd";
-      return new ConsoleClient(label);
-    }
-  }
-
-  // Storage protocols — create Store, wrap with client
   const store = await createStoreFromUrl(url, options);
   return new ClientClass(store);
 }
@@ -224,10 +180,6 @@ export async function createClientFromUrl(
 
 /**
  * Create a store resolver — bind backends once, resolve URLs later.
- *
- * Only handles storage protocols (memory + registered backends).
- * Transport URLs (http, ws) will throw — those produce clients directly,
- * not Stores.
  *
  * @example
  * ```typescript
@@ -248,13 +200,9 @@ export function createStoreResolver(
  * Create a client resolver — bind a client class and backends once,
  * resolve URLs later.
  *
- * For storage protocols: creates a Store and wraps it with the given client class.
- * For transport protocols (http, ws): returns the transport client directly
- * (client class is ignored — there's no Store to wrap).
- *
  * @example
  * ```typescript
- * import { DataStoreClient } from "@bandeira-tech/b3nd-sdk";
+ * import { DataStoreClient } from "@bandeira-tech/b3nd-stores/adapters";
  *
  * const resolveClient = createClientResolver(DataStoreClient, [
  *   postgresBackend(),

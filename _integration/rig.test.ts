@@ -38,7 +38,11 @@ function createTestPrograms(): Record<string, Program> {
 }
 
 import type { EncryptedPayload } from "@bandeira-tech/b3nd-core/encrypt";
-import { httpApi } from "@bandeira-tech/b3nd-core/rig";
+
+// The "Rig observe — HttpClient SSE end-to-end" integration that used
+// to live at the bottom of this file moved to @bandeira-tech/b3nd-servers
+// when HttpClient + httpApi moved there. It is now a rig+HTTP test, not
+// a rig+Store test, and belongs alongside its transport.
 
 /**
  * Helper: read encrypted data and decrypt it.
@@ -440,14 +444,13 @@ Deno.test("Identity.decrypt - throws for public-only identity", async () => {
 
 // ── getSupportedProtocols tests ──
 
-Deno.test("getSupportedProtocols - returns built-in protocols with no backends", () => {
+Deno.test("getSupportedProtocols - returns built-in storage protocols with no backends", () => {
   const protocols = getSupportedProtocols();
   assertEquals(protocols.includes("memory://"), true);
-  assertEquals(protocols.includes("https://"), true);
-  assertEquals(protocols.includes("http://"), true);
-  assertEquals(protocols.includes("wss://"), true);
-  assertEquals(protocols.includes("ws://"), true);
-  assertEquals(protocols.includes("console://"), true);
+  // Transport schemes are out of scope for this factory now.
+  assertEquals(protocols.includes("http://"), false);
+  assertEquals(protocols.includes("ws://"), false);
+  assertEquals(protocols.includes("console://"), false);
   // External backends not included without registration
   assertEquals(protocols.includes("postgresql://"), false);
 });
@@ -718,7 +721,7 @@ Deno.test("createClientFromUrl - rejects unknown protocol", async () => {
   await assertRejects(
     () => createClientFromUrl("ftp://example.com"),
     Error,
-    "Unsupported backend URL protocol",
+    "Unsupported storage URL protocol",
   );
 });
 
@@ -1166,7 +1169,7 @@ Deno.test("createClientFromUrl - rejects postgresql without registered backend",
   await assertRejects(
     () => createClientFromUrl("postgresql://localhost/db"),
     Error,
-    "Unsupported backend URL protocol",
+    "Unsupported storage URL protocol",
   );
 });
 
@@ -1175,7 +1178,7 @@ Deno.test("createClientFromUrl - rejects mongodb without registered backend", as
   await assertRejects(
     () => createClientFromUrl("mongodb://localhost/db"),
     Error,
-    "Unsupported backend URL protocol",
+    "Unsupported storage URL protocol",
   );
 });
 
@@ -1184,7 +1187,7 @@ Deno.test("createClientFromUrl - rejects sqlite without registered backend", asy
   await assertRejects(
     () => createClientFromUrl("sqlite:///tmp/test.db"),
     Error,
-    "Unsupported backend URL protocol",
+    "Unsupported storage URL protocol",
   );
 });
 
@@ -1201,43 +1204,35 @@ Deno.test("createStoreFromUrl - creates memory store", async () => {
   assertEquals(results[0]?.[1], { values: { fire: 10 }, val: 1 });
 });
 
-Deno.test("createStoreFromUrl - rejects console (transport protocol)", async () => {
+// Transport URL schemes (http://, ws://, console://, grpc://) are no
+// longer handled by this factory — they produce transport clients,
+// which live in @bandeira-tech/b3nd-servers and are constructed
+// directly. The factory rejects them as unsupported storage protocols.
+
+Deno.test("createStoreFromUrl - rejects console URL", async () => {
   const { createStoreFromUrl } = await import("../factory/factory.ts");
   await assertRejects(
     () => createStoreFromUrl("console://debug"),
     Error,
-    "transport protocol",
+    "Unsupported storage URL protocol",
   );
 });
 
-Deno.test("createClientFromUrl - creates console client", async () => {
-  const { createClientFromUrl } = await import("../factory/factory.ts");
-  const client = await createClientFromUrl("console://debug");
-
-  const results = await client.receive([
-    ["mutable://test/key", "hello"],
-  ]);
-  assertEquals(results[0].accepted, true);
-
-  // Console client is write-only
-  await client.read(["mutable://test/key"]);
-});
-
-Deno.test("createStoreFromUrl - rejects http (transport protocol)", async () => {
+Deno.test("createStoreFromUrl - rejects http URL", async () => {
   const { createStoreFromUrl } = await import("../factory/factory.ts");
   await assertRejects(
     () => createStoreFromUrl("http://example.com"),
     Error,
-    "transport protocol",
+    "Unsupported storage URL protocol",
   );
 });
 
-Deno.test("createStoreFromUrl - rejects ws (transport protocol)", async () => {
+Deno.test("createStoreFromUrl - rejects ws URL", async () => {
   const { createStoreFromUrl } = await import("../factory/factory.ts");
   await assertRejects(
     () => createStoreFromUrl("ws://example.com"),
     Error,
-    "transport protocol",
+    "Unsupported storage URL protocol",
   );
 });
 
@@ -1246,7 +1241,7 @@ Deno.test("createStoreFromUrl - rejects postgresql without registered backend", 
   await assertRejects(
     () => createStoreFromUrl("postgresql://localhost/db"),
     Error,
-    "Unsupported backend URL protocol",
+    "Unsupported storage URL protocol",
   );
 });
 
@@ -1255,7 +1250,7 @@ Deno.test("createStoreFromUrl - rejects unknown protocol", async () => {
   await assertRejects(
     () => createStoreFromUrl("ftp://example.com"),
     Error,
-    "Unsupported backend URL protocol",
+    "Unsupported storage URL protocol",
   );
 });
 
@@ -1326,7 +1321,7 @@ Deno.test("createStoreResolver - rejects transport protocols", async () => {
   await assertRejects(
     () => resolveStore("http://example.com"),
     Error,
-    "transport protocol",
+    "Unsupported storage URL protocol",
   );
 });
 
@@ -1362,7 +1357,7 @@ Deno.test("createClientResolver - maps multiple URLs", async () => {
   const { createClientResolver } = await import("../factory/factory.ts");
 
   const resolveClient = createClientResolver();
-  const urls = ["memory://", "memory://", "console://test"];
+  const urls = ["memory://", "memory://", "memory://"];
   const clients = await Promise.all(urls.map(resolveClient));
 
   assertEquals(clients.length, 3);
@@ -1995,88 +1990,4 @@ Deno.test("Rig dispatch - status returns healthy for multi-client", async () => 
 
   const status = await rig.status();
   assertEquals(status.status, "healthy");
-});
-
-// ── SSE observe integration test ──
-
-Deno.test({
-  name: "Rig observe - HttpClient SSE end-to-end",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  fn: async () => {
-    // 1. Start a server rig with memory backend
-    const _route119 = connection(memClient(), ["*"]);
-    const serverRig = new Rig({
-      routes: {
-        receive: [_route119],
-        read: [_route119],
-      },
-    });
-    const requestHandler = httpApi(serverRig);
-
-    // Start a Deno server on a random port
-    const server = Deno.serve(
-      { port: 0, onListen() {} },
-      requestHandler,
-    );
-    const port = server.addr.port;
-
-    const subscriberAbort = new AbortController();
-
-    try {
-      // 2. Create a subscriber rig with HttpClient (observe-capable)
-      const { createClientFromUrl } = await import("../factory/factory.ts");
-      const httpClient = await createClientFromUrl(`http://127.0.0.1:${port}`);
-      const _route120 = connection(httpClient, ["*"]);
-      const subscriberRig = new Rig({
-        routes: {
-          receive: [_route120],
-          read: [_route120],
-          observe: [_route120],
-        },
-      });
-
-      // 3. Observe a pattern via the rig (routes to HttpClient SSE).
-      // INV-style: get the uri, then read it for the payload.
-      const received: { uri: string; data: unknown }[] = [];
-
-      const done = (async () => {
-        for await (
-          const ev of subscriberRig.observe(
-            ["mutable://open/market/:msgId"],
-            subscriberAbort.signal,
-          )
-        ) {
-          const [r] = await subscriberRig.read([ev[1][0]]);
-          if (r) {
-            received.push({ uri: ev[1][0], data: r[1] });
-          }
-          if (received.length >= 2) subscriberAbort.abort();
-        }
-      })();
-
-      // Give SSE connection time to establish
-      await new Promise((r) => setTimeout(r, 300));
-
-      // 4. Write through the server rig (simulating another client)
-      await serverRig.receive([
-        ["mutable://open/market/msg1", { type: "ask", price: 42 }],
-      ]);
-      await serverRig.receive([
-        ["mutable://open/market/msg2", { type: "bid", price: 40 }],
-      ]);
-
-      await done;
-
-      // 5. Verify subscriber received the matching events
-      assertEquals(received.length, 2);
-      assertEquals(received[0].uri, "mutable://open/market/msg1");
-      assertEquals(received[0].data, { type: "ask", price: 42 });
-      assertEquals(received[1].uri, "mutable://open/market/msg2");
-    } finally {
-      subscriberAbort.abort();
-      await new Promise((r) => setTimeout(r, 50));
-      await server.shutdown();
-    }
-  },
 });
