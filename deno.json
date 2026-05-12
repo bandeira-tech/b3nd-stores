@@ -14,8 +14,8 @@
     "./indexeddb": "./indexeddb/mod.ts"
   },
   "tasks": {
-    "test": "deno test --allow-all --ignore=indexeddb,ipfs,postgres/integration.test.ts,mongo/integration.test.ts,fs/integration.test.ts,s3/integration.test.ts",
-    "check": "deno check _shared/mod.ts localstorage/mod.ts postgres/mod.ts mongo/mod.ts fs/mod.ts sqlite/mod.ts elasticsearch/mod.ts s3/mod.ts indexeddb/mod.ts",
+    "test": "deno test --allow-all --ignore=indexeddb,ipfs,postgres/integration.test.ts,mongo/integration.test.ts,fs/integration.test.ts,s3/integration.test.ts,ipfs/integration.test.ts",
+    "check": "deno check _shared/mod.ts localstorage/mod.ts postgres/mod.ts mongo/mod.ts fs/mod.ts sqlite/mod.ts elasticsearch/mod.ts s3/mod.ts indexeddb/mod.ts ipfs/mod.ts",
     "test:integration:postgres": "deno test --allow-all postgres/integration.test.ts",
     "test:integration:mongo": "deno test --allow-all mongo/integration.test.ts",
     "test:integration:sqlite": "deno test --allow-all sqlite/integration.test.ts",

@@ -48,11 +48,5 @@ function createMockIpfsExecutor(): IpfsExecutor {
 }
 
 runSharedStoreSuite("IpfsStore", {
-  create: () => {
-    const executor = createMockIpfsExecutor();
-    return new IpfsStore(executor);
-  },
-  // IPFS store uses content-addressed CIDs + an internal index.
-  // Listing via trailing slash depends on the internal URI→CID index.
-  supportsList: true,
+  create: () => new IpfsStore(createMockIpfsExecutor()),
 });
