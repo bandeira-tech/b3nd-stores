@@ -8,8 +8,8 @@
  */
 
 import { assertEquals } from "@std/assert";
-import { MemoryStore } from "../memory/store.ts";
-import { DataStoreClient } from "../_adapters/data-store-client.ts";
+import { MemoryStore } from "../src/backends/memory/store.ts";
+import { DataStoreClient } from "../src/clients/data-store-client.ts";
 import { connection } from "@bandeira-tech/b3nd-core/rig";
 import { Rig } from "@bandeira-tech/b3nd-core/rig";
 import type { Program } from "@bandeira-tech/b3nd-core/types";

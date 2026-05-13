@@ -3,12 +3,13 @@
 /**
  * Build an NPM package from the Deno source via @deno/dnt.
  *
- * Output: ./npm/  — published as `@bandeira-tech/b3nd-stores` on
+ * Output: ./npm/  — published as `@bandeira-tech/b3nd-save` on
  * npmjs.com. Same import surface as JSR.
  *
  * Each subpath is environment-specific by design:
  *   - postgres / mongo / sqlite / fs / ipfs / s3 / elasticsearch  → Node
  *   - indexeddb / localstorage                                    → browser
+ *   - factory / clients / shared / memory                         → both
  */
 
 import { build, emptyDir } from "jsr:@deno/dnt@^0.42.1";
@@ -20,15 +21,20 @@ await emptyDir("./npm");
 
 await build({
   entryPoints: [
-    { name: "./postgres", path: "./postgres/mod.ts" },
-    { name: "./mongo", path: "./mongo/mod.ts" },
-    { name: "./sqlite", path: "./sqlite/mod.ts" },
-    { name: "./fs", path: "./fs/mod.ts" },
-    { name: "./ipfs", path: "./ipfs/mod.ts" },
-    { name: "./s3", path: "./s3/mod.ts" },
-    { name: "./elasticsearch", path: "./elasticsearch/mod.ts" },
-    { name: "./localstorage", path: "./localstorage/mod.ts" },
-    { name: "./indexeddb", path: "./indexeddb/mod.ts" },
+    { name: ".", path: "./src/mod.ts" },
+    { name: "./factory", path: "./src/factory/mod.ts" },
+    { name: "./clients", path: "./src/clients/mod.ts" },
+    { name: "./shared", path: "./src/shared/mod.ts" },
+    { name: "./memory", path: "./src/backends/memory/mod.ts" },
+    { name: "./postgres", path: "./src/backends/postgres/mod.ts" },
+    { name: "./mongo", path: "./src/backends/mongo/mod.ts" },
+    { name: "./sqlite", path: "./src/backends/sqlite/mod.ts" },
+    { name: "./fs", path: "./src/backends/fs/mod.ts" },
+    { name: "./ipfs", path: "./src/backends/ipfs/mod.ts" },
+    { name: "./s3", path: "./src/backends/s3/mod.ts" },
+    { name: "./elasticsearch", path: "./src/backends/elasticsearch/mod.ts" },
+    { name: "./localstorage", path: "./src/backends/localstorage/mod.ts" },
+    { name: "./indexeddb", path: "./src/backends/indexeddb/mod.ts" },
   ],
   outDir: "./npm",
   shims: { deno: false },
@@ -43,18 +49,18 @@ await build({
   // source. Until then, the npm build will inline a copy of core's
   // types — small footprint, but suboptimal.
   package: {
-    name: "@bandeira-tech/b3nd-stores",
+    name: "@bandeira-tech/b3nd-save",
     version,
     description: denoJson.description,
     license: "MIT",
     repository: {
       type: "git",
-      url: "git+https://github.com/bandeira-tech/b3nd-stores.git",
+      url: "git+https://github.com/bandeira-tech/b3nd-save.git",
     },
     bugs: {
-      url: "https://github.com/bandeira-tech/b3nd-stores/issues",
+      url: "https://github.com/bandeira-tech/b3nd-save/issues",
     },
-    homepage: "https://github.com/bandeira-tech/b3nd-stores#readme",
+    homepage: "https://github.com/bandeira-tech/b3nd-save#readme",
     engines: {
       node: ">=20",
     },
@@ -79,4 +85,4 @@ await build({
   },
 });
 
-console.log(`\n✔ Built @bandeira-tech/b3nd-stores@${version} → ./npm/`);
+console.log(`\n✔ Built @bandeira-tech/b3nd-save@${version} → ./npm/`);
