@@ -1,6 +1,6 @@
 {
   "name": "@bandeira-tech/b3nd-save",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "B3nd data-saving layer: Store backends (postgres, mongo, sqlite, fs, ipfs, s3, elasticsearch, localstorage, indexeddb, memory), Store→ProtocolInterfaceNode clients, shared backend helpers, and a URL-based backend factory.",
   "exports": {
     ".": "./src/mod.ts",
@@ -33,8 +33,8 @@
     "build:npm": "deno run -A scripts/build-npm.ts"
   },
   "imports": {
-    "@bandeira-tech/b3nd-core": "jsr:@bandeira-tech/b3nd-core@^0.17.0",
-    "@bandeira-tech/b3nd-core/types": "jsr:@bandeira-tech/b3nd-core@^0.17.0/types",
+    "@bandeira-tech/b3nd-core": "jsr:@bandeira-tech/b3nd-core@^0.18.0",
+    "@bandeira-tech/b3nd-core/types": "jsr:@bandeira-tech/b3nd-core@^0.18.0/types",
     "pg": "npm:pg@8",
     "mongodb": "npm:mongodb@6",
     "canonicalize": "npm:canonicalize@2.0.0",
