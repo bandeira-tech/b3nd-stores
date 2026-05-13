@@ -21,11 +21,11 @@ function createIpfsExecutor(): IpfsExecutor {
   const base = IPFS_API_URL.replace(/\/+$/, "");
 
   return {
-    async add(content: string): Promise<string> {
+    async add(content: Uint8Array): Promise<string> {
       const form = new FormData();
       form.append(
         "file",
-        new Blob([content], { type: "application/octet-stream" }),
+        new Blob([content as BlobPart], { type: "application/octet-stream" }),
       );
 
       const res = await fetch(`${base}/api/v0/add?pin=false&quiet=true`, {
@@ -41,7 +41,7 @@ function createIpfsExecutor(): IpfsExecutor {
       return json.Hash;
     },
 
-    async cat(cid: string): Promise<string> {
+    async cat(cid: string): Promise<Uint8Array> {
       const res = await fetch(
         `${base}/api/v0/cat?arg=${encodeURIComponent(cid)}`,
         { method: "POST" },
@@ -51,7 +51,7 @@ function createIpfsExecutor(): IpfsExecutor {
         throw new Error(`IPFS cat failed: ${res.status} ${await res.text()}`);
       }
 
-      return await res.text();
+      return new Uint8Array(await res.arrayBuffer());
     },
 
     async pin(cid: string): Promise<void> {

@@ -64,7 +64,9 @@ export class JsonClient implements ProtocolInterfaceNode {
 
   async read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
     const raw = await this.inner.read<unknown>(urls);
-    return raw.map(([uri, payload]): Output<T> => [uri, decodePayload(payload) as T]);
+    return raw.map((
+      [uri, payload],
+    ): Output<T> => [uri, decodePayload(payload) as T]);
   }
 
   observe(

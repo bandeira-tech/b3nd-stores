@@ -44,7 +44,9 @@ function uriToRelPath(uri: string): string {
  * `protocol_host/path.bin` becomes `protocol://host/path`.
  */
 function relPathToUri(relPath: string): string {
-  const withoutExt = relPath.endsWith(EXT) ? relPath.slice(0, -EXT.length) : relPath;
+  const withoutExt = relPath.endsWith(EXT)
+    ? relPath.slice(0, -EXT.length)
+    : relPath;
   return withoutExt.replace("_", "://");
 }
 
@@ -67,7 +69,10 @@ export class FsStore implements Store {
 
     for (const entry of entries) {
       try {
-        await this.executor.writeFile(this._resolvePath(entry.uri), entry.payload);
+        await this.executor.writeFile(
+          this._resolvePath(entry.uri),
+          entry.payload,
+        );
         results.push({ success: true });
       } catch (err) {
         results.push({

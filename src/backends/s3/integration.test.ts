@@ -28,13 +28,13 @@ function createS3Executor(): S3Executor {
   return {
     async putObject(
       key: string,
-      body: string,
+      body: Uint8Array,
       contentType: string,
     ): Promise<void> {
       const res = await fetch(url(key), {
         method: "PUT",
         headers: { "Content-Type": contentType },
-        body,
+        body: body as BodyInit,
       });
       if (!res.ok) {
         const text = await res.text();
@@ -43,7 +43,7 @@ function createS3Executor(): S3Executor {
       await res.text();
     },
 
-    async getObject(key: string): Promise<string | null> {
+    async getObject(key: string): Promise<Uint8Array | null> {
       const res = await fetch(url(key), { method: "GET" });
       if (res.status === 404) {
         await res.text();
@@ -53,7 +53,7 @@ function createS3Executor(): S3Executor {
         const text = await res.text();
         throw new Error(`S3 GET failed: ${res.status} ${text}`);
       }
-      return await res.text();
+      return new Uint8Array(await res.arrayBuffer());
     },
 
     async deleteObject(key: string): Promise<void> {
