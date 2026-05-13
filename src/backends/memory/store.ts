@@ -25,6 +25,7 @@ import type {
 } from "@bandeira-tech/b3nd-core/types";
 import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
 import { parseUrl } from "@bandeira-tech/b3nd-core/url";
+import { storageFailure } from "../../shared/mod.ts";
 import type {
   Store,
   StoreCapabilities,
@@ -74,7 +75,7 @@ export class MemoryStore implements Store {
       } catch (err) {
         results.push({
           success: false,
-          error: err instanceof Error ? err.message : "Write failed",
+          ...storageFailure(err, "Write failed", entry.uri),
         });
       }
     }
@@ -219,7 +220,7 @@ export class MemoryStore implements Store {
       } catch (err) {
         results.push({
           success: false,
-          error: err instanceof Error ? err.message : "Delete failed",
+          ...storageFailure(err, "Delete failed", uri),
         });
       }
     }

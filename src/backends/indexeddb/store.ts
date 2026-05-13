@@ -17,7 +17,11 @@ import type {
   StatusResult,
 } from "@bandeira-tech/b3nd-core/types";
 import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
-import { dispatchRead, validateReadParams } from "../../shared/mod.ts";
+import {
+  dispatchRead,
+  storageFailure,
+  validateReadParams,
+} from "../../shared/mod.ts";
 import type {
   Store,
   StoreCapabilities,
@@ -182,16 +186,16 @@ export class IndexedDBStore implements Store {
         } catch (err) {
           results.push({
             success: false,
-            error: err instanceof Error ? err.message : "Write failed",
+            ...storageFailure(err, "Write failed", entry.uri),
           });
         }
       }
     } catch (err) {
+      // Outer failure (e.g. db open) — every entry fails with the same
+      // root cause; no per-entry uri since the failure isn't entry-scoped.
+      const failure = storageFailure(err, "Write failed");
       for (const _ of entries) {
-        results.push({
-          success: false,
-          error: err instanceof Error ? err.message : "Write failed",
-        });
+        results.push({ success: false, ...failure });
       }
     }
 
@@ -347,16 +351,15 @@ export class IndexedDBStore implements Store {
         } catch (err) {
           results.push({
             success: false,
-            error: err instanceof Error ? err.message : "Delete failed",
+            ...storageFailure(err, "Delete failed", uri),
           });
         }
       }
     } catch (err) {
+      // Outer failure — every uri fails with the same root cause.
+      const failure = storageFailure(err, "Delete failed");
       for (const _ of uris) {
-        results.push({
-          success: false,
-          error: err instanceof Error ? err.message : "Delete failed",
-        });
+        results.push({ success: false, ...failure });
       }
     }
 

@@ -143,6 +143,14 @@ Deno.test("PostgresStore - atomicBatch: write rolls back on per-entry failure", 
   // All entries fail with the same error — that's the atomic contract.
   assertEquals(results.every((r) => !r.success), true);
   assertEquals(results.every((r) => r.error === "boom on entry 2"), true);
+  // Structured error mirrors the string with a STORAGE_ERROR code.
+  assertEquals(
+    results.every((r) =>
+      r.errorDetail?.code === "STORAGE_ERROR" &&
+      r.errorDetail.message === "boom on entry 2"
+    ),
+    true,
+  );
 });
 
 Deno.test("PostgresStore - empty batch returns empty results", async () => {

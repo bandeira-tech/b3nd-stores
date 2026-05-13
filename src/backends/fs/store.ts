@@ -16,7 +16,11 @@ import type {
   StatusResult,
 } from "@bandeira-tech/b3nd-core/types";
 import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
-import { dispatchRead, validateReadParams } from "../../shared/mod.ts";
+import {
+  dispatchRead,
+  storageFailure,
+  validateReadParams,
+} from "../../shared/mod.ts";
 import type {
   Store,
   StoreCapabilities,
@@ -77,7 +81,7 @@ export class FsStore implements Store {
       } catch (err) {
         results.push({
           success: false,
-          error: err instanceof Error ? err.message : "Write failed",
+          ...storageFailure(err, "Write failed", entry.uri),
         });
       }
     }

@@ -16,7 +16,11 @@ import type {
   StatusResult,
 } from "@bandeira-tech/b3nd-core/types";
 import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
-import { dispatchRead, validateReadParams } from "../../shared/mod.ts";
+import {
+  dispatchRead,
+  storageFailure,
+  validateReadParams,
+} from "../../shared/mod.ts";
 import type {
   Store,
   StoreCapabilities,
@@ -69,8 +73,10 @@ export class SqliteStore implements Store {
       });
       return Promise.resolve(entries.map(() => ({ success: true })));
     } catch (err) {
-      const error = err instanceof Error ? err.message : "Write failed";
-      return Promise.resolve(entries.map(() => ({ success: false, error })));
+      const failure = storageFailure(err, "Write failed");
+      return Promise.resolve(
+        entries.map(() => ({ success: false, ...failure })),
+      );
     }
   }
 
@@ -149,8 +155,10 @@ export class SqliteStore implements Store {
       });
       return Promise.resolve(uris.map(() => ({ success: true })));
     } catch (err) {
-      const error = err instanceof Error ? err.message : "Delete failed";
-      return Promise.resolve(uris.map(() => ({ success: false, error })));
+      const failure = storageFailure(err, "Delete failed");
+      return Promise.resolve(
+        uris.map(() => ({ success: false, ...failure })),
+      );
     }
   }
 

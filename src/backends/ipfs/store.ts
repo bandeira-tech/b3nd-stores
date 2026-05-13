@@ -16,7 +16,11 @@ import type {
   StatusResult,
 } from "@bandeira-tech/b3nd-core/types";
 import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
-import { dispatchRead, validateReadParams } from "../../shared/mod.ts";
+import {
+  dispatchRead,
+  storageFailure,
+  validateReadParams,
+} from "../../shared/mod.ts";
 import type {
   Store,
   StoreCapabilities,
@@ -65,7 +69,7 @@ export class IpfsStore implements Store {
       } catch (err) {
         results.push({
           success: false,
-          error: err instanceof Error ? err.message : "Write failed",
+          ...storageFailure(err, "Write failed", entry.uri),
         });
       }
     }
@@ -158,7 +162,7 @@ export class IpfsStore implements Store {
       } catch (err) {
         results.push({
           success: false,
-          error: err instanceof Error ? err.message : "Delete failed",
+          ...storageFailure(err, "Delete failed", uri),
         });
       }
     }
