@@ -10,3 +10,4 @@
 
 export { applyReadParams, validateReadParams } from "./read.ts";
 export { dispatchRead, type ReadHandlers } from "./dispatch.ts";
+export { storageFailure } from "./errors.ts";

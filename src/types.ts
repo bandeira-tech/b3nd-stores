@@ -16,6 +16,7 @@
  */
 
 import type {
+  B3ndError,
   DeleteResult,
   Output,
   StatusResult,
@@ -36,10 +37,19 @@ export interface StoreEntry {
   payload: Uint8Array;
 }
 
-/** Per-entry result of a write operation. */
+/**
+ * Per-entry result of a write operation.
+ *
+ * `errorDetail` mirrors `DeleteResult.errorDetail` — callers that want
+ * to react to specific failure modes (e.g. `STORAGE_ERROR` from the
+ * underlying driver vs. a programmer error from the store layer)
+ * should switch on `errorDetail.code` rather than parsing `error`.
+ * The `error` string remains for human-readable logs.
+ */
 export interface StoreWriteResult {
   success: boolean;
   error?: string;
+  errorDetail?: B3ndError;
 }
 
 /**

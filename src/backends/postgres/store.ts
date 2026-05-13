@@ -17,7 +17,11 @@ import type {
   StatusResult,
 } from "@bandeira-tech/b3nd-core/types";
 import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
-import { dispatchRead, validateReadParams } from "../../shared/mod.ts";
+import {
+  dispatchRead,
+  storageFailure,
+  validateReadParams,
+} from "../../shared/mod.ts";
 import type {
   Store,
   StoreCapabilities,
@@ -80,8 +84,8 @@ export class PostgresStore implements Store {
       });
       return entries.map(() => ({ success: true }));
     } catch (err) {
-      const error = err instanceof Error ? err.message : "Write failed";
-      return entries.map(() => ({ success: false, error }));
+      const failure = storageFailure(err, "Write failed");
+      return entries.map(() => ({ success: false, ...failure }));
     }
   }
 
@@ -164,8 +168,8 @@ export class PostgresStore implements Store {
       });
       return uris.map(() => ({ success: true }));
     } catch (err) {
-      const error = err instanceof Error ? err.message : "Delete failed";
-      return uris.map(() => ({ success: false, error }));
+      const failure = storageFailure(err, "Delete failed");
+      return uris.map(() => ({ success: false, ...failure }));
     }
   }
 

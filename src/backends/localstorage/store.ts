@@ -13,7 +13,11 @@ import type {
 } from "@bandeira-tech/b3nd-core/types";
 import { decodeBase64, encodeBase64 } from "@bandeira-tech/b3nd-core";
 import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
-import { applyReadParams, dispatchRead } from "../../shared/mod.ts";
+import {
+  applyReadParams,
+  dispatchRead,
+  storageFailure,
+} from "../../shared/mod.ts";
 import type {
   Store,
   StoreCapabilities,
@@ -59,7 +63,7 @@ export class LocalStorageStore implements Store {
       } catch (err) {
         results.push({
           success: false,
-          error: err instanceof Error ? err.message : "Write failed",
+          ...storageFailure(err, "Write failed", entry.uri),
         });
       }
     }
@@ -129,7 +133,7 @@ export class LocalStorageStore implements Store {
       } catch (err) {
         results.push({
           success: false,
-          error: err instanceof Error ? err.message : "Delete failed",
+          ...storageFailure(err, "Delete failed", uri),
         });
       }
     }
