@@ -45,7 +45,7 @@ const store = new postgres.PostgresStore("myapp", executor);
 
 | Backend       | Import                                   | Executor                               | Push-down                                       |
 | ------------- | ---------------------------------------- | -------------------------------------- | ----------------------------------------------- |
-| Memory        | `@bandeira-tech/b3nd-save/memory`        | none                                   | recursive `_walk` (deep) — see notes            |
+| Memory        | `@bandeira-tech/b3nd-save/memory`        | none                                   | in-memory tree walk over direct children        |
 | PostgreSQL    | `@bandeira-tech/b3nd-save/postgres`      | inject any `pg`-style executor         | `ls` / `count` via `LIKE … AND NOT LIKE …%/%`   |
 | SQLite        | `@bandeira-tech/b3nd-save/sqlite`        | inject any `@db/sqlite`-style executor | same as Postgres                                |
 | MongoDB       | `@bandeira-tech/b3nd-save/mongo`         | inject a `MongoExecutor`               | regex filter `^<prefix>[^/]+$`                  |
@@ -55,12 +55,6 @@ const store = new postgres.PostgresStore("myapp", executor);
 | IPFS          | `@bandeira-tech/b3nd-save/ipfs`          | inject an `IpfsExecutor`               | in-memory `uri → CID` index                     |
 | LocalStorage  | `@bandeira-tech/b3nd-save/localstorage`  | injects browser `Storage`              | flat key scan                                   |
 | IndexedDB     | `@bandeira-tech/b3nd-save/indexeddb`     | injects `indexedDB` / `IDBKeyRange`    | bounded cursor with early termination           |
-
-> **Memory ls/count semantics differ.** Every other backend in this package
-> implements `fn=ls` / `fn=count` as _shallow direct-leaves only_. `MemoryStore`
-> walks recursively (deep) — it predates the shallow convention and is kept that
-> way as a deterministic stand-in for tests and prototypes. If you need shallow
-> semantics in-memory, layer a thin shallow-only wrapper over a `Map`.
 
 ## Clients and factory
 

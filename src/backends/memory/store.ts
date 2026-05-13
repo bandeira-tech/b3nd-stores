@@ -112,10 +112,14 @@ export class MemoryStore implements Store {
 
   // ── Read ─────────────────────────────────────────────────────────
 
-  read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
+  // deno-lint-ignore require-await
+  async read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
     // 1:1 with input urls. Each output is [inputUrl, payload]; payload
     // shape varies by fn (see ProtocolInterfaceNode.read docs).
-    const out: Output<T>[] = urls.map((url) => {
+    // `async` here turns synchronous parameter-validation throws into
+    // a rejected promise — matches the contract every other backend
+    // already satisfies via real async I/O.
+    return urls.map((url) => {
       const parsed = parseUrl(url);
       switch (parsed.fn) {
         case "read":
@@ -128,7 +132,6 @@ export class MemoryStore implements Store {
           throw new Error(`MemoryStore: unsupported fn '${parsed.fn}'`);
       }
     });
-    return Promise.resolve(out);
   }
 
   private _readOne<T>(uri: string): T | undefined {
@@ -146,9 +149,11 @@ export class MemoryStore implements Store {
   }
 
   /**
-   * Walk the prefix and collect leaves into `[uri, payload]` Output
-   * tuples. Returns the raw entries; callers apply ls or count
-   * semantics.
+   * Collect the **direct leaves** under the prefix node — entries
+   * whose URI is `prefix + <segment>` with no further `/`. Matches
+   * the shallow `fn=ls`/`fn=count` contract enforced across every
+   * backend in this package; clients that want recursion call
+   * `ls` per level.
    */
   private _walk(uri: string): Output[] {
     const { node, parts, program, path } = resolveTarget(uri, this.storage);
@@ -160,33 +165,21 @@ export class MemoryStore implements Store {
       if (!current) return [];
     }
 
-    const out: Output[] = [];
+    if (!current.children) return [];
+
     const prefix = path.endsWith("/")
       ? `${program}${path}`
       : `${program}${path}/`;
 
-    function collect(n: StorageNode, currentUri: string) {
-      if (n.value !== undefined) {
-        out.push([currentUri, (n.value as { data: unknown }).data]);
-      }
-      if (n.children) {
-        for (const [key, child] of n.children) {
-          collect(child, `${currentUri}/${key}`);
-        }
+    const out: Output[] = [];
+    for (const [key, child] of current.children) {
+      if (child.value !== undefined) {
+        out.push([
+          `${prefix}${key}`,
+          (child.value as { data: unknown }).data,
+        ]);
       }
     }
-
-    if (current.children) {
-      for (const [key, child] of current.children) {
-        collect(child, `${prefix}${key}`);
-      }
-    } else if (current.value !== undefined) {
-      out.push([
-        `${program}${path}`,
-        (current.value as { data: unknown }).data,
-      ]);
-    }
-
     return out;
   }
 

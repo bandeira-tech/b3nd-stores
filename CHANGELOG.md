@@ -31,6 +31,15 @@ factory, and the shared helpers backend authors need to stay on contract.
   `applyReadParams`, `dispatchRead` from there to stay consistent with the
   contract every built-in backend follows.
 
+### Breaking — MemoryStore now follows the shallow ls/count contract
+
+- `MemoryStore.read` with `fn=ls` and `fn=count` is now **shallow direct-leaves
+  only**, matching every other backend in this package. Previously it walked
+  recursively. Code that relied on the deep walk must call `ls` per level to
+  recurse.
+- `MemoryStore` now runs against the same shared test suite as every other
+  backend; the contract is enforced uniformly across all ten implementations.
+
 ### Breaking — factory has no built-in protocols
 
 - `memory://` is no longer a built-in scheme in the factory. Every backend,
