@@ -1,5 +1,124 @@
 # Changelog
 
+## 0.7.0 — Atomic batches, structured errors, streaming payload
+
+Three contract-level changes land together: writes that advertise atomicity
+actually enforce it, write/delete failures carry structured `B3ndError` codes,
+and `payload` accepts a `ReadableStream<Uint8Array>` in addition to `Uint8Array`
+so large objects can flow through fs/s3/ipfs without buffering.
+
+### Breaking — `StoreEntry.payload` widens to a union
+
+- `payload: Uint8Array` → `payload: Uint8Array | ReadableStream<Uint8Array>`
+  (`StorePayload` is exported from the root and from
+  `@bandeira-tech/b3nd-save`).
+- Buffered backends (memory, postgres, sqlite, mongo, indexeddb, localstorage,
+  elasticsearch) collect any incoming stream to bytes before storing and still
+  return `Uint8Array` on read.
+- Streamer backends keep streams end-to-end. `read` on `fs` / `s3` / `ipfs` now
+  returns `ReadableStream<Uint8Array>` so large objects never need to fit in
+  memory. Callers that want bytes regardless can use the exported
+  `toBytes(payload)` helper (or `await new Response(payload).bytes()`).
+- `SimpleClient.receive` accepts `Message<StorePayload>[]`;
+  `DataStoreClient.receive` accepts `Message<StorePayload | null>[]` (`null`
+  still signals delete).
+
+### Breaking — `atomicBatch: true` now means what it says
+
+- `PostgresStore` and `SqliteStore` wrap batch `write` and `delete` loops in the
+  executor's `transaction` primitive. The whole batch commits or none of it
+  does. On failure every result is `{ success: false }` with the same root-cause
+  error.
+- Previously these advertised the flag but issued N independent statements with
+  no transaction wrapping. UTXO-style message batches relying on the flag could
+  observe partially-applied batches on mid-batch failure.
+- Backends that don't advertise the flag keep per-entry best-effort semantics —
+  unchanged.
+
+### Non-breaking — structured errors on write/delete
+
+- `StoreWriteResult` gains `errorDetail?: B3ndError` (mirrors what
+  `DeleteResult` already had). Failures carry `code: "STORAGE_ERROR"`, the
+  driver's message, and the failing `uri` when the failure attributes to a
+  single entry.
+- The `error: string` field stays for human-readable logs; existing consumers
+  reading only that field don't break.
+- New `storageFailure(err, fallback, uri?)` helper in
+  `@bandeira-tech/b3nd-save/shared` translates a thrown executor error into the
+  structured shape — backend authors should use it in catch blocks to stay
+  consistent.
+
+### Shared helpers added
+
+- `toBytes(payload)` / `toStream(payload)` — payload normalizers.
+- `storageFailure(err, fallback, uri?)` — structured-failure builder.
+
+### Notes for backend authors
+
+- The `binaryData` capability flag is gone for good (was already removed in
+  0.6.0). Every backend handles bytes; nothing else to advertise.
+- The empty-batch case (`write([])` / `delete([])`) now short-circuits to an
+  empty result without touching the executor.
+
+## 0.6.0 — `Store` is local; bytes-only payload; drop the JSON envelope
+
+The framework no longer treats `Store` as a core concept. The interface and its
+supporting types move into b3nd-save itself; clients (`SimpleClient`,
+`DataStoreClient`) are the only seam through which the rest of b3nd sees
+storage. Companion release: `@bandeira-tech/b3nd-core@0.18.0` (which removes
+`Store` / `StoreEntry` / `StoreWriteResult` / `StoreCapabilities` from
+`b3nd-core/types`).
+
+### Breaking — `Store` types move out of core
+
+- `Store`, `StoreEntry`, `StoreWriteResult`, `StoreCapabilities` are now defined
+  in `src/types.ts` of this package and re-exported from the root. Imports that
+  came from `@bandeira-tech/b3nd-core/types` need to switch to
+  `@bandeira-tech/b3nd-save` (or `@bandeira-tech/b3nd-save/clients` for the
+  client-side).
+- Bumps the core dep to `^0.18.0`.
+
+### Breaking — bytes-only payload
+
+- `StoreEntry.payload: Uint8Array` (was `StoreEntry.data: unknown`). The `Store`
+  is mechanical byte storage — no JSON, no envelope walker, no kind
+  discriminators. Higher layers own serialization.
+- Each backend uses its most natural byte primitive:
+  - **Postgres** — `BYTEA` column.
+  - **SQLite** — `BLOB` column.
+  - **MongoDB** — BSON `Binary`.
+  - **Filesystem** — raw file bytes (`.bin` extension).
+  - **S3** — raw object body with `application/octet-stream` content type
+    (`.bin` key suffix).
+  - **IPFS** — raw block bytes.
+  - **Elasticsearch** — base64 string in a regular field (ES has no native
+    `_source`-round-tripping binary type).
+  - **LocalStorage** — base64 string.
+  - **Memory** / **IndexedDB** — `Uint8Array` directly (native).
+- Schema versions: PostgreSQL → `v3.0.0`. SQLite schema reshaped to a single
+  `payload BLOB NOT NULL` column.
+
+### Breaking — `src/shared/binary.ts` removed
+
+- The recursive `__b3nd_binary__` JSON envelope walker (`encodeBinaryForJson` /
+  `decodeBinaryFromJson`) is gone. Callers who need to round-trip JSON through
+  the store should encode/decode themselves (e.g.
+  `TextEncoder().encode(JSON.stringify(...))`).
+- The root `* as shared` namespace re-export is dropped. The `/shared` subpath
+  stays for the backend-author helpers (`dispatchRead`, `validateReadParams`,
+  `applyReadParams`).
+
+### Breaking — `StoreCapabilities.binaryData` removed
+
+- Every backend handles bytes now, so the flag conveyed nothing.
+
+### Tooling
+
+- Test-only `JsonClient` helper in `tests/helpers/json-client.ts` — wraps a
+  bytes-only client with JSON encode/decode for integration tests that want to
+  keep arbitrary-shape payloads. Not exported from the package; production code
+  should encode/decode on its own terms.
+
 ## 0.5.0 — Rename to `@bandeira-tech/b3nd-save`, `src/` layout, zero built-in protocols
 
 Public-release preparation. The package is renamed from `b3nd-stores` to
