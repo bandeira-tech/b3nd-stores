@@ -12,6 +12,8 @@
  * receive a `Uint8Array` back; the wire format is invisible.
  */
 
+import { decodeBase64, encodeBase64 } from "@bandeira-tech/b3nd-core";
+
 const TAG = "__b3nd_binary__";
 
 interface BinaryEnvelope {
@@ -27,24 +29,6 @@ function isBinaryEnvelope(v: unknown): v is BinaryEnvelope {
     typeof r.data === "string";
 }
 
-function bytesToBase64(bytes: Uint8Array): string {
-  // String.fromCharCode(...bytes) blows the call stack on large
-  // buffers — chunk it.
-  let s = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    s += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  return btoa(s);
-}
-
-function base64ToBytes(b64: string): Uint8Array {
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
-
 /**
  * Recursively walk `data` and replace any `Uint8Array` with a JSON-safe
  * envelope. Non-binary values pass through unchanged. Plain objects and
@@ -55,7 +39,7 @@ export function encodeBinaryForJson(data: unknown): unknown {
     return {
       [TAG]: true,
       encoding: "base64",
-      data: bytesToBase64(data),
+      data: encodeBase64(data),
     };
   }
   if (Array.isArray(data)) return data.map(encodeBinaryForJson);
@@ -74,7 +58,7 @@ export function encodeBinaryForJson(data: unknown): unknown {
  * any binary envelope back to a `Uint8Array`.
  */
 export function decodeBinaryFromJson(data: unknown): unknown {
-  if (isBinaryEnvelope(data)) return base64ToBytes(data.data);
+  if (isBinaryEnvelope(data)) return decodeBase64(data.data);
   if (Array.isArray(data)) return data.map(decodeBinaryFromJson);
   if (data && typeof data === "object" && data.constructor === Object) {
     const out: Record<string, unknown> = {};
