@@ -90,3 +90,38 @@ function createMockSqliteExecutor(): SqliteExecutor {
 runSharedStoreSuite("SqliteStore", {
   create: () => new SqliteStore("test", createMockSqliteExecutor()),
 });
+
+import { assertEquals } from "jsr:@std/assert";
+
+Deno.test("SqliteStore - atomicBatch: write rolls back on per-entry failure", async () => {
+  // Executor that throws on the second INSERT to simulate a mid-batch
+  // failure. The transaction wrapper should surface failure for every
+  // entry in the batch.
+  let inserts = 0;
+  const executor: SqliteExecutor = {
+    query: (sql: string): SqliteExecutorResult => {
+      const upper = sql.trim().toUpperCase();
+      if (upper.startsWith("INSERT")) {
+        inserts++;
+        if (inserts === 2) throw new Error("boom on entry 2");
+      }
+      return { rows: [] };
+    },
+    transaction: <T>(fn: (tx: SqliteExecutor) => T): T => fn(executor),
+  };
+  const store = new SqliteStore("test", executor);
+  const results = await store.write([
+    { uri: "store://a", payload: new Uint8Array([1]) },
+    { uri: "store://b", payload: new Uint8Array([2]) },
+    { uri: "store://c", payload: new Uint8Array([3]) },
+  ]);
+  assertEquals(results.length, 3);
+  assertEquals(results.every((r) => !r.success), true);
+  assertEquals(results.every((r) => r.error === "boom on entry 2"), true);
+});
+
+Deno.test("SqliteStore - empty batch returns empty results", async () => {
+  const store = new SqliteStore("test", createMockSqliteExecutor());
+  assertEquals(await store.write([]), []);
+  assertEquals(await store.delete([]), []);
+});

@@ -49,28 +49,29 @@ export class SqliteStore implements Store {
   // ── Write ────────────────────────────────────────────────────────
 
   write(entries: StoreEntry[]): Promise<StoreWriteResult[]> {
-    const results: StoreWriteResult[] = [];
+    if (entries.length === 0) return Promise.resolve([]);
 
-    for (const entry of entries) {
-      try {
-        this.executor.query(
-          `INSERT INTO ${this.tableName} (uri, payload, updated_at)
-           VALUES (?, ?, datetime('now'))
-           ON CONFLICT(uri) DO UPDATE SET
-             payload = excluded.payload,
-             updated_at = datetime('now')`,
-          [entry.uri, entry.payload],
-        );
-        results.push({ success: true });
-      } catch (err) {
-        results.push({
-          success: false,
-          error: err instanceof Error ? err.message : "Write failed",
-        });
-      }
+    // `capabilities.atomicBatch` is true: the whole batch commits or
+    // nothing does. On failure every result is `{ success: false }`
+    // with the same root-cause error.
+    try {
+      this.executor.transaction((tx) => {
+        for (const entry of entries) {
+          tx.query(
+            `INSERT INTO ${this.tableName} (uri, payload, updated_at)
+             VALUES (?, ?, datetime('now'))
+             ON CONFLICT(uri) DO UPDATE SET
+               payload = excluded.payload,
+               updated_at = datetime('now')`,
+            [entry.uri, entry.payload],
+          );
+        }
+      });
+      return Promise.resolve(entries.map(() => ({ success: true })));
+    } catch (err) {
+      const error = err instanceof Error ? err.message : "Write failed";
+      return Promise.resolve(entries.map(() => ({ success: false, error })));
     }
-
-    return Promise.resolve(results);
   }
 
   // ── Read ─────────────────────────────────────────────────────────
@@ -134,24 +135,23 @@ export class SqliteStore implements Store {
   // ── Delete ───────────────────────────────────────────────────────
 
   delete(uris: string[]): Promise<DeleteResult[]> {
-    const results: DeleteResult[] = [];
+    if (uris.length === 0) return Promise.resolve([]);
 
-    for (const uri of uris) {
-      try {
-        this.executor.query(
-          `DELETE FROM ${this.tableName} WHERE uri = ?`,
-          [uri],
-        );
-        results.push({ success: true });
-      } catch (err) {
-        results.push({
-          success: false,
-          error: err instanceof Error ? err.message : "Delete failed",
-        });
-      }
+    // Atomic batch: every uri either deletes together or not at all.
+    try {
+      this.executor.transaction((tx) => {
+        for (const uri of uris) {
+          tx.query(
+            `DELETE FROM ${this.tableName} WHERE uri = ?`,
+            [uri],
+          );
+        }
+      });
+      return Promise.resolve(uris.map(() => ({ success: true })));
+    } catch (err) {
+      const error = err instanceof Error ? err.message : "Delete failed";
+      return Promise.resolve(uris.map(() => ({ success: false, error })));
     }
-
-    return Promise.resolve(results);
   }
 
   // ── Status ───────────────────────────────────────────────────────

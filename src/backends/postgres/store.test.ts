@@ -110,3 +110,43 @@ function createMockSqlExecutor(): SqlExecutor {
 runSharedStoreSuite("PostgresStore", {
   create: () => new PostgresStore("test", createMockSqlExecutor()),
 });
+
+import { assertEquals } from "jsr:@std/assert";
+
+Deno.test("PostgresStore - atomicBatch: write rolls back on per-entry failure", async () => {
+  // Executor that throws on the second INSERT to simulate a mid-batch
+  // failure. The transaction wrapper should roll back and surface
+  // failure for every entry in the batch.
+  let inserts = 0;
+  const executor: SqlExecutor = {
+    query: (sql: string) => {
+      const upper = sql.trim().toUpperCase();
+      if (upper.startsWith("INSERT")) {
+        inserts++;
+        if (inserts === 2) throw new Error("boom on entry 2");
+      }
+      return Promise.resolve({ rows: [] });
+    },
+    transaction: async <T>(fn: (tx: SqlExecutor) => Promise<T>): Promise<T> => {
+      // Real Postgres would roll back; the mock just propagates the
+      // throw — which is enough to verify the store's failure path.
+      return await fn(executor);
+    },
+  };
+  const store = new PostgresStore("test", executor);
+  const results = await store.write([
+    { uri: "store://a", payload: new Uint8Array([1]) },
+    { uri: "store://b", payload: new Uint8Array([2]) },
+    { uri: "store://c", payload: new Uint8Array([3]) },
+  ]);
+  assertEquals(results.length, 3);
+  // All entries fail with the same error — that's the atomic contract.
+  assertEquals(results.every((r) => !r.success), true);
+  assertEquals(results.every((r) => r.error === "boom on entry 2"), true);
+});
+
+Deno.test("PostgresStore - empty batch returns empty results", async () => {
+  const store = new PostgresStore("test", createMockSqlExecutor());
+  assertEquals(await store.write([]), []);
+  assertEquals(await store.delete([]), []);
+});
