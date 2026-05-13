@@ -1,34 +1,38 @@
 /**
  * SqliteStore — SQLite implementation of Store.
  *
- * Pure mechanical storage with no protocol awareness. Pushes
+ * Pure mechanical byte storage with no protocol awareness. Pushes
  * fn=ls/fn=count down to SQL using the shallow-direct-leaves
  * predicate: `uri LIKE ? || '%' AND uri NOT LIKE ? || '%/%'`.
  *
  * Uses an injected synchronous SqliteExecutor; results are wrapped in
- * Promise.resolve() to satisfy the async Store interface. JSON is
- * stored as TEXT — there is no JSONB in SQLite — and parsed on read.
+ * Promise.resolve() to satisfy the async Store interface. `payload`
+ * is a BLOB; the store does not inspect or transform its contents.
  */
 
 import type {
   DeleteResult,
   Output,
   StatusResult,
+} from "@bandeira-tech/b3nd-core/types";
+import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
+import { dispatchRead, validateReadParams } from "../../shared/mod.ts";
+import type {
   Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
-} from "@bandeira-tech/b3nd-core/types";
-import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
-import {
-  decodeBinaryFromJson,
-  dispatchRead,
-  encodeBinaryForJson,
-  validateReadParams,
-} from "../../shared/mod.ts";
+} from "../../types.ts";
 import type { SqliteExecutor } from "./mod.ts";
 
 const STORE_NAME = "SqliteStore";
+
+function toBytes(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (Array.isArray(value)) return new Uint8Array(value as number[]);
+  throw new Error(`SqliteStore: unexpected payload type ${typeof value}`);
+}
 
 export class SqliteStore implements Store {
   private readonly tableName: string;
@@ -49,14 +53,13 @@ export class SqliteStore implements Store {
 
     for (const entry of entries) {
       try {
-        const encoded = JSON.stringify(encodeBinaryForJson(entry.data));
         this.executor.query(
-          `INSERT INTO ${this.tableName} (uri, data, updated_at)
+          `INSERT INTO ${this.tableName} (uri, payload, updated_at)
            VALUES (?, ?, datetime('now'))
            ON CONFLICT(uri) DO UPDATE SET
-             data = excluded.data,
+             payload = excluded.payload,
              updated_at = datetime('now')`,
-          [entry.uri, encoded],
+          [entry.uri, entry.payload],
         );
         results.push({ success: true });
       } catch (err) {
@@ -72,7 +75,7 @@ export class SqliteStore implements Store {
 
   // ── Read ─────────────────────────────────────────────────────────
 
-  read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
+  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]> {
     return dispatchRead<T>(urls, STORE_NAME, {
       read: (p) => this._readOne(p.uri),
       ls: (p) => this._ls(p),
@@ -80,15 +83,13 @@ export class SqliteStore implements Store {
     });
   }
 
-  private _readOne(uri: string): unknown {
+  private _readOne(uri: string): Uint8Array | undefined {
     const result = this.executor.query(
-      `SELECT data FROM ${this.tableName} WHERE uri = ?`,
+      `SELECT payload FROM ${this.tableName} WHERE uri = ?`,
       [uri],
     );
     if (!result.rows.length) return undefined;
-    const row = result.rows[0];
-    const raw = typeof row.data === "string" ? JSON.parse(row.data) : row.data;
-    return decodeBinaryFromJson(raw);
+    return toBytes(result.rows[0].payload);
   }
 
   private _ls(parsed: ParsedUrl): Output[] | string[] {
@@ -96,7 +97,7 @@ export class SqliteStore implements Store {
     const { params } = parsed;
     const format = params.format ?? "full";
 
-    const select = format === "uris" ? "uri" : "uri, data";
+    const select = format === "uris" ? "uri" : "uri, payload";
     const order = params.sortBy === "uri"
       ? ` ORDER BY uri ${params.sortOrder === "desc" ? "DESC" : "ASC"}`
       : "";
@@ -112,15 +113,10 @@ export class SqliteStore implements Store {
     }
 
     const result = this.executor.query(sql, args);
-    const rows = result.rows as Array<{ uri: string; data?: unknown }>;
+    const rows = result.rows as Array<{ uri: string; payload?: unknown }>;
 
     if (format === "uris") return rows.map((r) => r.uri);
-    return rows.map((r): Output => {
-      const raw = typeof r.data === "string"
-        ? JSON.parse(r.data as string)
-        : r.data;
-      return [r.uri, decodeBinaryFromJson(raw)];
-    });
+    return rows.map((r): Output => [r.uri, toBytes(r.payload)]);
   }
 
   private _count(parsed: ParsedUrl): number {
@@ -179,9 +175,6 @@ export class SqliteStore implements Store {
   }
 
   capabilities(): StoreCapabilities {
-    return {
-      atomicBatch: true,
-      binaryData: false,
-    };
+    return { atomicBatch: true };
   }
 }

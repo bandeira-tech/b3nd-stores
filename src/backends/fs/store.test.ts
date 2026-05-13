@@ -12,7 +12,7 @@ import type { FsExecutor } from "./mod.ts";
 
 /** In-memory filesystem executor that simulates file operations. */
 function createMockFsExecutor(): FsExecutor {
-  const files = new Map<string, string>();
+  const files = new Map<string, Uint8Array>();
 
   return {
     readFile: async (path: string) => {
@@ -23,7 +23,7 @@ function createMockFsExecutor(): FsExecutor {
       return content;
     },
 
-    writeFile: async (path: string, content: string) => {
+    writeFile: async (path: string, content: Uint8Array) => {
       files.set(path, content);
     },
 

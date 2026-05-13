@@ -12,12 +12,12 @@ import type { IpfsExecutor } from "./mod.ts";
 
 /** In-memory IPFS executor that simulates IPFS node operations. */
 function createMockIpfsExecutor(): IpfsExecutor {
-  const objects = new Map<string, string>();
+  const objects = new Map<string, Uint8Array>();
   const pins = new Set<string>();
   let cidCounter = 0;
 
   return {
-    add: async (content: string) => {
+    add: async (content: Uint8Array) => {
       const cid = `QmTest${++cidCounter}`;
       objects.set(cid, content);
       return cid;

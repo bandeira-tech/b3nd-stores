@@ -15,13 +15,13 @@ import type { FsExecutor } from "./mod.ts";
 
 function createFsExecutor(_rootDir: string): FsExecutor {
   return {
-    async readFile(path: string): Promise<string> {
-      return await Deno.readTextFile(path);
+    async readFile(path: string): Promise<Uint8Array> {
+      return await Deno.readFile(path);
     },
 
-    async writeFile(path: string, content: string): Promise<void> {
+    async writeFile(path: string, content: Uint8Array): Promise<void> {
       await ensureDir(dirname(path));
-      await Deno.writeTextFile(path, content);
+      await Deno.writeFile(path, content);
     },
 
     async removeFile(path: string): Promise<void> {

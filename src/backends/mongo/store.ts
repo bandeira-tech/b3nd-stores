@@ -1,29 +1,28 @@
 /**
  * MongoStore — MongoDB implementation of Store.
  *
- * Pure mechanical storage with no protocol awareness. Uses an
+ * Pure mechanical byte storage with no protocol awareness. Uses an
  * injected MongoExecutor so the package does not depend on a specific
- * MongoDB driver. `fn=ls`/`fn=count` push down to a regex prefix
- * query that enforces the shallow-direct-leaves contract:
- * `^<prefix>[^/]+$`.
+ * MongoDB driver. Payload is stored as a BSON `Binary` value (the
+ * `mongodb` driver maps `Uint8Array` to it transparently).
+ *
+ * `fn=ls`/`fn=count` push down to a regex prefix query that enforces
+ * the shallow-direct-leaves contract: `^<prefix>[^/]+$`.
  */
 
 import type {
   DeleteResult,
   Output,
   StatusResult,
+} from "@bandeira-tech/b3nd-core/types";
+import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
+import { dispatchRead, validateReadParams } from "../../shared/mod.ts";
+import type {
   Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
-} from "@bandeira-tech/b3nd-core/types";
-import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
-import {
-  decodeBinaryFromJson,
-  dispatchRead,
-  encodeBinaryForJson,
-  validateReadParams,
-} from "../../shared/mod.ts";
+} from "../../types.ts";
 import type { MongoExecutor } from "./mod.ts";
 
 const STORE_NAME = "MongoStore";
@@ -31,6 +30,30 @@ const STORE_NAME = "MongoStore";
 /** Escape special regex characters for safe use in a RegExp pattern. */
 function escapeRegex(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Normalize a Mongo document field into a `Uint8Array`. The driver may
+ * surface BSON `Binary` (which exposes `.buffer`) or a raw
+ * `Uint8Array` depending on options.
+ */
+function toBytes(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (
+    value && typeof value === "object" &&
+    "buffer" in (value as Record<string, unknown>) &&
+    (value as { buffer: unknown }).buffer instanceof Uint8Array
+  ) {
+    return (value as { buffer: Uint8Array }).buffer;
+  }
+  if (
+    value && typeof value === "object" &&
+    "buffer" in (value as Record<string, unknown>) &&
+    (value as { buffer: unknown }).buffer instanceof ArrayBuffer
+  ) {
+    return new Uint8Array((value as { buffer: ArrayBuffer }).buffer);
+  }
+  throw new Error(`MongoStore: unexpected payload type ${typeof value}`);
 }
 
 export class MongoStore implements Store {
@@ -57,7 +80,7 @@ export class MongoStore implements Store {
           {
             $set: {
               uri: entry.uri,
-              data: encodeBinaryForJson(entry.data),
+              payload: entry.payload,
               updatedAt: new Date(),
             },
           },
@@ -77,7 +100,7 @@ export class MongoStore implements Store {
 
   // ── Read ─────────────────────────────────────────────────────────
 
-  read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
+  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]> {
     return dispatchRead<T>(urls, STORE_NAME, {
       read: (p) => this._readOne(p.uri),
       ls: (p) => this._ls(p),
@@ -85,10 +108,10 @@ export class MongoStore implements Store {
     });
   }
 
-  private async _readOne(uri: string): Promise<unknown> {
+  private async _readOne(uri: string): Promise<Uint8Array | undefined> {
     const doc = await this.executor.findOne({ uri });
     if (!doc) return undefined;
-    return decodeBinaryFromJson(doc.data);
+    return toBytes(doc.payload);
   }
 
   /** Build the shallow-direct-leaves regex filter for a prefix. */
@@ -120,10 +143,7 @@ export class MongoStore implements Store {
     );
 
     if (format === "uris") return docs.map((d) => d.uri as string);
-    return docs.map((d): Output => [
-      d.uri as string,
-      decodeBinaryFromJson(d.data),
-    ]);
+    return docs.map((d): Output => [d.uri as string, toBytes(d.payload)]);
   }
 
   private async _count(parsed: ParsedUrl): Promise<number> {
@@ -181,9 +201,6 @@ export class MongoStore implements Store {
   }
 
   capabilities(): StoreCapabilities {
-    return {
-      atomicBatch: false,
-      binaryData: false,
-    };
+    return { atomicBatch: false };
   }
 }

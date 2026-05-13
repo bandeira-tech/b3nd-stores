@@ -1,10 +1,9 @@
 /**
  * S3Store — Amazon S3 implementation of Store.
  *
- * Pure mechanical storage with no protocol awareness. One S3 object
- * per entry. Object body is the encoded payload at the top level —
- * the legacy `{ values, data }` envelope is gone with the
- * `StoreEntry.values` field in b3nd-core@0.15.
+ * Pure mechanical byte storage with no protocol awareness. One S3
+ * object per entry. Object body is the payload bytes verbatim; the
+ * store is opaque.
  *
  * `fn=ls` / `fn=count` are shallow direct-leaves only: list objects
  * under the URI's key prefix, then filter to keys whose remainder
@@ -17,30 +16,28 @@ import type {
   DeleteResult,
   Output,
   StatusResult,
+} from "@bandeira-tech/b3nd-core/types";
+import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
+import { dispatchRead, validateReadParams } from "../../shared/mod.ts";
+import type {
   Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
-} from "@bandeira-tech/b3nd-core/types";
-import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
-import {
-  decodeBinaryFromJson,
-  dispatchRead,
-  encodeBinaryForJson,
-  validateReadParams,
-} from "../../shared/mod.ts";
+} from "../../types.ts";
 import type { S3Executor } from "./mod.ts";
 
 const STORE_NAME = "S3Store";
+const EXT = ".bin";
 
 /** `protocol://host/path` → `protocol_host/path`. */
 function uriToKey(uri: string): string {
   return uri.replace("://", "_").replace(/^\//, "");
 }
 
-/** Inverse of `uriToKey` with `.json` suffix stripping. */
+/** Inverse of `uriToKey` with `.bin` suffix stripping. */
 function keyTailToUri(tail: string): string {
-  const noExt = tail.endsWith(".json") ? tail.slice(0, -5) : tail;
+  const noExt = tail.endsWith(EXT) ? tail.slice(0, -EXT.length) : tail;
   return noExt.replace("_", "://");
 }
 
@@ -65,11 +62,10 @@ export class S3Store implements Store {
 
     for (const entry of entries) {
       try {
-        const body = JSON.stringify(encodeBinaryForJson(entry.data));
         await this.executor.putObject(
           this._resolveKey(entry.uri),
-          body,
-          "application/json",
+          entry.payload,
+          "application/octet-stream",
         );
         results.push({ success: true });
       } catch (err) {
@@ -85,7 +81,7 @@ export class S3Store implements Store {
 
   // ── Read ─────────────────────────────────────────────────────────
 
-  read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
+  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]> {
     return dispatchRead<T>(urls, STORE_NAME, {
       read: (p) => this._readOne(p.uri),
       ls: (p) => this._ls(p),
@@ -93,14 +89,9 @@ export class S3Store implements Store {
     });
   }
 
-  private async _readOne(uri: string): Promise<unknown> {
+  private async _readOne(uri: string): Promise<Uint8Array | undefined> {
     const content = await this.executor.getObject(this._resolveKey(uri));
-    if (content === null) return undefined;
-    try {
-      return decodeBinaryFromJson(JSON.parse(content));
-    } catch {
-      return undefined;
-    }
+    return content ?? undefined;
   }
 
   /** List direct-child URIs under a prefix (no recursion into sub-prefixes). */
@@ -109,7 +100,7 @@ export class S3Store implements Store {
     const keys = await this.executor.listObjects(keyPrefix);
     const uris: string[] = [];
     for (const key of keys) {
-      if (!key.endsWith(".json")) continue;
+      if (!key.endsWith(EXT)) continue;
       const tail = key.slice(keyPrefix.length);
       if (tail.includes("/")) continue; // nested, not a direct leaf
       uris.push(`${prefixUri}${keyTailToUri(tail)}`);
@@ -201,13 +192,10 @@ export class S3Store implements Store {
   }
 
   capabilities(): StoreCapabilities {
-    return {
-      atomicBatch: false,
-      binaryData: false,
-    };
+    return { atomicBatch: false };
   }
 
   private _resolveKey(uri: string): string {
-    return `${this.prefix}${uriToKey(uri)}.json`;
+    return `${this.prefix}${uriToKey(uri)}${EXT}`;
   }
 }

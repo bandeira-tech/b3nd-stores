@@ -1,35 +1,35 @@
 /**
  * IndexedDBStore — browser IndexedDB implementation of Store.
  *
- * Pure mechanical storage with no protocol awareness. Uses IndexedDB
- * for large-scale persistent browser storage. IndexedDB's structured
- * clone supports binary data natively, so `Uint8Array` round-trips
- * without the `_shared/binary.ts` envelope.
+ * Pure mechanical byte storage with no protocol awareness. Uses
+ * IndexedDB for large-scale persistent browser storage. IndexedDB's
+ * structured clone preserves `Uint8Array` natively.
  *
  * `fn=ls` / `fn=count` are shallow direct-leaves only: cursor over
  * the `uri_index`, keep records whose URI is `prefix + <segment>`
  * with no further `/`. The `format=uris` fast path and `count` only
- * touch the index key — they never load the full record's `data`
- * blob.
+ * touch the index key — they never load the full record's payload.
  */
 
 import type {
   DeleteResult,
   Output,
   StatusResult,
+} from "@bandeira-tech/b3nd-core/types";
+import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
+import { dispatchRead, validateReadParams } from "../../shared/mod.ts";
+import type {
   Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
-} from "@bandeira-tech/b3nd-core/types";
-import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
-import { dispatchRead, validateReadParams } from "../../shared/mod.ts";
+} from "../../types.ts";
 
 const STORE_NAME = "IndexedDBStore";
 
 interface StoredRecord {
   uri: string;
-  data: unknown;
+  payload: Uint8Array;
 }
 
 // Minimal IndexedDB type definitions for cross-platform compatibility
@@ -168,7 +168,7 @@ export class IndexedDBStore implements Store {
         try {
           const record: StoredRecord = {
             uri: entry.uri,
-            data: entry.data,
+            payload: entry.payload,
           };
           await new Promise<void>((resolve, reject) => {
             const request = store.put(record);
@@ -200,7 +200,7 @@ export class IndexedDBStore implements Store {
 
   // ── Read ─────────────────────────────────────────────────────────
 
-  read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
+  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]> {
     return dispatchRead<T>(urls, STORE_NAME, {
       read: (p) => this._readOne(p.uri),
       ls: (p) => this._ls(p),
@@ -208,14 +208,14 @@ export class IndexedDBStore implements Store {
     });
   }
 
-  private async _readOne(uri: string): Promise<unknown> {
+  private async _readOne(uri: string): Promise<Uint8Array | undefined> {
     try {
       const store = await this.getStore();
-      return await new Promise<unknown>((resolve) => {
+      return await new Promise<Uint8Array | undefined>((resolve) => {
         const request = store.get(uri);
         request.onsuccess = () => {
           const record = request.result as StoredRecord | undefined;
-          resolve(record ? record.data : undefined);
+          resolve(record ? record.payload : undefined);
         };
         request.onerror = () => resolve(undefined);
       });
@@ -233,7 +233,7 @@ export class IndexedDBStore implements Store {
   private async _walkLeaves(
     parsed: ParsedUrl,
     onlyUris: boolean,
-  ): Promise<Array<{ uri: string; data?: unknown }>> {
+  ): Promise<Array<{ uri: string; payload?: Uint8Array }>> {
     const { uri: prefix, params } = parsed;
     const desc = params.sortBy === "uri" && params.sortOrder === "desc";
     const direction = desc ? "prev" : "next";
@@ -251,9 +251,9 @@ export class IndexedDBStore implements Store {
     const store = await this.getStore();
     const index = store.index("uri_index");
 
-    return await new Promise<Array<{ uri: string; data?: unknown }>>(
+    return await new Promise<Array<{ uri: string; payload?: Uint8Array }>>(
       (resolve, reject) => {
-        const out: Array<{ uri: string; data?: unknown }> = [];
+        const out: Array<{ uri: string; payload?: Uint8Array }> = [];
         let skipped = 0;
         const request = onlyUris
           ? index.openKeyCursor(range, direction)
@@ -286,7 +286,7 @@ export class IndexedDBStore implements Store {
           if (onlyUris) {
             out.push({ uri: key });
           } else {
-            out.push({ uri: key, data: cursor.value.data });
+            out.push({ uri: key, payload: cursor.value.payload });
           }
 
           if (limit !== undefined && out.length >= limit) {
@@ -309,7 +309,7 @@ export class IndexedDBStore implements Store {
     try {
       const entries = await this._walkLeaves(parsed, onlyUris);
       if (onlyUris) return entries.map((e) => e.uri);
-      return entries.map((e): Output => [e.uri, e.data]);
+      return entries.map((e): Output => [e.uri, e.payload]);
     } catch {
       return [];
     }
@@ -383,7 +383,6 @@ export class IndexedDBStore implements Store {
   }
 
   capabilities(): StoreCapabilities {
-    // IndexedDB structured clone handles Uint8Array natively.
-    return { atomicBatch: false, binaryData: true };
+    return { atomicBatch: false };
   }
 }

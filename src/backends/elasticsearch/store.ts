@@ -1,9 +1,11 @@
 /**
  * ElasticsearchStore — Elasticsearch implementation of Store.
  *
- * Pure mechanical storage with no protocol awareness. URIs are
+ * Pure mechanical byte storage with no protocol awareness. URIs are
  * partitioned into one index per `protocol_hostname` pair, with the
- * path as the document `_id`.
+ * path as the document `_id`. Payload bytes are base64-encoded into a
+ * string field — ES has no native binary type that round-trips
+ * arbitrary bytes through `_source`.
  *
  * `fn=ls` / `fn=count` are pushed down via an ES regex query that
  * enforces the shallow-direct-leaves contract: `<docPrefix>[^/]+`.
@@ -15,18 +17,16 @@ import type {
   DeleteResult,
   Output,
   StatusResult,
+} from "@bandeira-tech/b3nd-core/types";
+import { decodeBase64, encodeBase64 } from "@bandeira-tech/b3nd-core";
+import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
+import { dispatchRead, validateReadParams } from "../../shared/mod.ts";
+import type {
   Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
-} from "@bandeira-tech/b3nd-core/types";
-import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
-import {
-  decodeBinaryFromJson,
-  dispatchRead,
-  encodeBinaryForJson,
-  validateReadParams,
-} from "../../shared/mod.ts";
+} from "../../types.ts";
 import type { ElasticsearchExecutor } from "./mod.ts";
 
 const STORE_NAME = "ElasticsearchStore";
@@ -97,7 +97,7 @@ export class ElasticsearchStore implements Store {
         // field produces `path` (text) + `path.keyword` (keyword);
         // we target `path.keyword` for exact-match regex push-down.
         await this.executor.index(index, docId, {
-          data: encodeBinaryForJson(entry.data),
+          payload: encodeBase64(entry.payload),
           path: docId,
         });
         results.push({ success: true });
@@ -114,7 +114,7 @@ export class ElasticsearchStore implements Store {
 
   // ── Read ─────────────────────────────────────────────────────────
 
-  read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
+  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]> {
     return dispatchRead<T>(urls, STORE_NAME, {
       read: (p) => this._readOne(p.uri),
       ls: (p) => this._ls(p),
@@ -122,11 +122,11 @@ export class ElasticsearchStore implements Store {
     });
   }
 
-  private async _readOne(uri: string): Promise<unknown> {
+  private async _readOne(uri: string): Promise<Uint8Array | undefined> {
     const { index, docId } = uriToIndexAndDocId(uri, this.indexPrefix);
     const doc = await this.executor.get(index, docId);
     if (!doc) return undefined;
-    return decodeBinaryFromJson(doc.data);
+    return decodeBase64(doc.payload as string);
   }
 
   private _leafQuery(docPrefix: string): Record<string, unknown> {
@@ -169,7 +169,7 @@ export class ElasticsearchStore implements Store {
     }
     return result.hits.map((hit): Output => [
       indexAndDocIdToUri(index, this.indexPrefix, hit._id),
-      hit._source ? decodeBinaryFromJson(hit._source.data) : undefined,
+      hit._source ? decodeBase64(hit._source.payload as string) : undefined,
     ]);
   }
 
@@ -230,9 +230,6 @@ export class ElasticsearchStore implements Store {
   }
 
   capabilities(): StoreCapabilities {
-    return {
-      atomicBatch: false,
-      binaryData: false,
-    };
+    return { atomicBatch: false };
   }
 }

@@ -1,6 +1,6 @@
 /**
  * SqliteStore unit tests — runs the shared suite against an in-memory
- * mock that simulates SQLite text-column behavior (no JSONB).
+ * mock that simulates SQLite BLOB column behavior.
  */
 
 /// <reference lib="deno.ns" />
@@ -10,7 +10,7 @@ import { SqliteStore } from "./store.ts";
 import type { SqliteExecutor, SqliteExecutorResult } from "./mod.ts";
 
 function createMockSqliteExecutor(): SqliteExecutor {
-  const data = new Map<string, { uri: string; data: string }>();
+  const data = new Map<string, { uri: string; payload: Uint8Array }>();
 
   const executor: SqliteExecutor = {
     query: (sql: string, args?: unknown[]): SqliteExecutorResult => {
@@ -22,8 +22,8 @@ function createMockSqliteExecutor(): SqliteExecutor {
 
       if (upper.startsWith("INSERT")) {
         const uri = args![0] as string;
-        const dataJson = args![1] as string;
-        data.set(uri, { uri, data: dataJson });
+        const payload = args![1] as Uint8Array;
+        data.set(uri, { uri, payload });
         return { rows: [], rowCount: 1 };
       }
 
@@ -36,7 +36,7 @@ function createMockSqliteExecutor(): SqliteExecutor {
         return { rows: [{ n }] };
       }
 
-      // ls: SELECT [uri | uri, data] FROM X WHERE uri LIKE ? || '%' AND uri NOT LIKE ? || '%/%' [ORDER BY] [LIMIT/OFFSET]
+      // ls: SELECT [uri | uri, payload] FROM X WHERE uri LIKE ? || '%' AND uri NOT LIKE ? || '%/%' [ORDER BY] [LIMIT/OFFSET]
       if (upper.includes("LIKE") && upper.includes("NOT LIKE")) {
         const prefix = args![0] as string;
         let rows = [...data.values()].filter((r) =>
@@ -57,10 +57,10 @@ function createMockSqliteExecutor(): SqliteExecutor {
           rows = rows.slice(offset, offset + limit);
         }
 
-        const selectsData = /SELECT\s+URI\s*,\s*DATA/.test(upper);
+        const selectsPayload = /SELECT\s+URI\s*,\s*PAYLOAD/.test(upper);
         return {
           rows: rows.map((r) =>
-            selectsData ? { uri: r.uri, data: r.data } : { uri: r.uri }
+            selectsPayload ? { uri: r.uri, payload: r.payload } : { uri: r.uri }
           ),
         };
       }
@@ -69,7 +69,7 @@ function createMockSqliteExecutor(): SqliteExecutor {
         const uri = args![0] as string;
         const row = data.get(uri);
         if (!row) return { rows: [] };
-        return { rows: [{ data: row.data }] };
+        return { rows: [{ payload: row.payload }] };
       }
 
       if (upper.startsWith("DELETE")) {

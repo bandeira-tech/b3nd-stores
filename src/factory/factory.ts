@@ -27,11 +27,9 @@
  *   new GrpcHttpClient({ url })                  // b3nd-servers/grpc/http/client
  */
 
-import type {
-  ProtocolInterfaceNode,
-  Store,
-} from "@bandeira-tech/b3nd-core/types";
+import type { ProtocolInterfaceNode } from "@bandeira-tech/b3nd-core/types";
 import { SimpleClient } from "../clients/simple-client.ts";
+import type { Store } from "../types.ts";
 
 /**
  * A user-provided backend resolver — maps URL protocols to Stores.

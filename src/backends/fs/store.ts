@@ -1,13 +1,12 @@
 /**
  * FsStore — Filesystem implementation of Store.
  *
- * Pure mechanical storage with no protocol awareness. Writes one JSON
- * file per entry; the file body is the encoded payload at the top
- * level (no envelope, no `values` field — those left the contract in
- * b3nd-core@0.15).
+ * Pure mechanical byte storage with no protocol awareness. Writes one
+ * file per entry; the file body is the payload bytes verbatim. The
+ * store is opaque — it does not parse or transform contents.
  *
  * `fn=ls` / `fn=count` are shallow direct-leaves only: they list the
- * `.json` files directly inside the prefix's mapped directory, never
+ * `.bin` files directly inside the prefix's mapped directory, never
  * recursing into subdirectories.
  */
 
@@ -15,39 +14,39 @@ import type {
   DeleteResult,
   Output,
   StatusResult,
+} from "@bandeira-tech/b3nd-core/types";
+import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
+import { dispatchRead, validateReadParams } from "../../shared/mod.ts";
+import type {
   Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
-} from "@bandeira-tech/b3nd-core/types";
-import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
-import {
-  decodeBinaryFromJson,
-  dispatchRead,
-  encodeBinaryForJson,
-  validateReadParams,
-} from "../../shared/mod.ts";
+} from "../../types.ts";
 import type { FsExecutor } from "./mod.ts";
 
 const STORE_NAME = "FsStore";
+const EXT = ".bin";
 
 /**
  * Convert a URI to a relative filesystem path.
- * `protocol://host/path` becomes `protocol_host/path.json`.
+ * `protocol://host/path` becomes `protocol_host/path.bin`.
  *
  * Only the FIRST `://` is rewritten — embedded `://` (rare but legal
  * in protocol-tunneling uris) stays in the path.
  */
 function uriToRelPath(uri: string): string {
-  return uri.replace("://", "_") + ".json";
+  return uri.replace("://", "_") + EXT;
 }
 
 /**
  * Convert a relative filesystem path back to a URI.
- * `protocol_host/path.json` becomes `protocol://host/path`.
+ * `protocol_host/path.bin` becomes `protocol://host/path`.
  */
 function relPathToUri(relPath: string): string {
-  const withoutExt = relPath.replace(/\.json$/, "");
+  const withoutExt = relPath.endsWith(EXT)
+    ? relPath.slice(0, -EXT.length)
+    : relPath;
   return withoutExt.replace("_", "://");
 }
 
@@ -70,8 +69,10 @@ export class FsStore implements Store {
 
     for (const entry of entries) {
       try {
-        const body = JSON.stringify(encodeBinaryForJson(entry.data));
-        await this.executor.writeFile(this._resolvePath(entry.uri), body);
+        await this.executor.writeFile(
+          this._resolvePath(entry.uri),
+          entry.payload,
+        );
         results.push({ success: true });
       } catch (err) {
         results.push({
@@ -86,7 +87,7 @@ export class FsStore implements Store {
 
   // ── Read ─────────────────────────────────────────────────────────
 
-  read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
+  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]> {
     return dispatchRead<T>(urls, STORE_NAME, {
       read: (p) => this._readOne(p.uri),
       ls: (p) => this._ls(p),
@@ -94,10 +95,9 @@ export class FsStore implements Store {
     });
   }
 
-  private async _readOne(uri: string): Promise<unknown> {
+  private async _readOne(uri: string): Promise<Uint8Array | undefined> {
     try {
-      const content = await this.executor.readFile(this._resolvePath(uri));
-      return decodeBinaryFromJson(JSON.parse(content));
+      return await this.executor.readFile(this._resolvePath(uri));
     } catch {
       return undefined;
     }
@@ -105,7 +105,7 @@ export class FsStore implements Store {
 
   /** Resolve the on-disk directory that holds the direct leaves of `prefixUri`. */
   private _dirForPrefix(prefixUri: string): string {
-    const rel = uriToRelPath(prefixUri).replace(/\.json$/, "").replace(
+    const rel = uriToRelPath(prefixUri).slice(0, -EXT.length).replace(
       /\/+$/,
       "",
     );
@@ -120,12 +120,12 @@ export class FsStore implements Store {
     } catch {
       return [];
     }
-    const relDir = uriToRelPath(prefixUri).replace(/\.json$/, "").replace(
+    const relDir = uriToRelPath(prefixUri).slice(0, -EXT.length).replace(
       /\/+$/,
       "",
     );
     return files
-      .filter((f) => f.endsWith(".json") && !f.includes("/"))
+      .filter((f) => f.endsWith(EXT) && !f.includes("/"))
       .map((f) => relPathToUri(`${relDir}/${f}`));
   }
 
@@ -209,10 +209,7 @@ export class FsStore implements Store {
   }
 
   capabilities(): StoreCapabilities {
-    return {
-      atomicBatch: false,
-      binaryData: false,
-    };
+    return { atomicBatch: false };
   }
 
   private _resolvePath(uri: string): string {

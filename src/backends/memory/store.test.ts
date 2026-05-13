@@ -19,5 +19,4 @@ runSharedStoreSuite("MemoryStore", {
 Deno.test("MemoryStore - capabilities shape", () => {
   const caps = new MemoryStore().capabilities();
   assertEquals(caps.atomicBatch, false);
-  assertEquals(caps.binaryData, false);
 });

@@ -1,11 +1,9 @@
 /**
  * IpfsStore — IPFS implementation of Store.
  *
- * Pure mechanical storage with no protocol awareness. Writes pinned
- * IPFS objects and maintains an in-memory `uri → CID` index for
- * lookups. Body is the encoded payload at the top level — the legacy
- * `{ values, data }` envelope is gone with the `StoreEntry.values`
- * field in b3nd-core@0.15.
+ * Pure mechanical byte storage with no protocol awareness. Writes
+ * pinned IPFS objects and maintains an in-memory `uri → CID` index
+ * for lookups. The block body is the payload bytes verbatim.
  *
  * `fn=ls` / `fn=count` are shallow direct-leaves only: scan the
  * in-memory index, keep URIs whose remainder under the prefix has no
@@ -16,18 +14,15 @@ import type {
   DeleteResult,
   Output,
   StatusResult,
+} from "@bandeira-tech/b3nd-core/types";
+import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
+import { dispatchRead, validateReadParams } from "../../shared/mod.ts";
+import type {
   Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
-} from "@bandeira-tech/b3nd-core/types";
-import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
-import {
-  decodeBinaryFromJson,
-  dispatchRead,
-  encodeBinaryForJson,
-  validateReadParams,
-} from "../../shared/mod.ts";
+} from "../../types.ts";
 import type { IpfsExecutor } from "./mod.ts";
 
 const STORE_NAME = "IpfsStore";
@@ -52,8 +47,7 @@ export class IpfsStore implements Store {
 
     for (const entry of entries) {
       try {
-        const content = JSON.stringify(encodeBinaryForJson(entry.data));
-        const cid = await this.executor.add(content);
+        const cid = await this.executor.add(entry.payload);
         await this.executor.pin(cid);
 
         // Unpin the old CID if this URI was already indexed
@@ -81,7 +75,7 @@ export class IpfsStore implements Store {
 
   // ── Read ─────────────────────────────────────────────────────────
 
-  read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
+  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]> {
     return dispatchRead<T>(urls, STORE_NAME, {
       read: (p) => this._readOne(p.uri),
       ls: (p) => this._ls(p),
@@ -89,12 +83,11 @@ export class IpfsStore implements Store {
     });
   }
 
-  private async _readOne(uri: string): Promise<unknown> {
+  private async _readOne(uri: string): Promise<Uint8Array | undefined> {
     const entry = this.index.get(uri);
     if (!entry) return undefined;
     try {
-      const content = await this.executor.cat(entry.cid);
-      return decodeBinaryFromJson(JSON.parse(content));
+      return await this.executor.cat(entry.cid);
     } catch {
       return undefined;
     }
@@ -213,9 +206,6 @@ export class IpfsStore implements Store {
   }
 
   capabilities(): StoreCapabilities {
-    return {
-      atomicBatch: false,
-      binaryData: false,
-    };
+    return { atomicBatch: false };
   }
 }

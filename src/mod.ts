@@ -10,15 +10,24 @@
  * Namespaces:
  *   factory       — URL → Store / Client resolution (no built-in protocols)
  *   clients       — Store → ProtocolInterfaceNode adapters
- *   shared        — Helpers for backend authors (binary, read, dispatch)
  *   memory        — In-memory reference backend
  *   postgres, mongo, sqlite, fs, ipfs, s3, elasticsearch,
  *   localstorage, indexeddb — Backend implementations
+ *
+ * Store types (`Store`, `StoreEntry`, ...) are re-exported from the
+ * root. `Store` is local to this package — clients are the bridge to
+ * the rest of b3nd.
  */
+
+export type {
+  Store,
+  StoreCapabilities,
+  StoreEntry,
+  StoreWriteResult,
+} from "./types.ts";
 
 export * as factory from "./factory/mod.ts";
 export * as clients from "./clients/mod.ts";
-export * as shared from "./shared/mod.ts";
 export * as memory from "./backends/memory/mod.ts";
 export * as postgres from "./backends/postgres/mod.ts";
 export * as mongo from "./backends/mongo/mod.ts";

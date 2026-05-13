@@ -1,22 +1,20 @@
 /**
  * MemoryStore — in-memory reference implementation of Store.
  *
- * Pure mechanical storage with no protocol awareness.
- * Write entries, read entries, delete entries.
+ * Pure mechanical byte storage with no protocol awareness.
  * Observation is a client concern — see `ObserveEmitter`.
  *
  * @example
  * ```typescript
- * import { MemoryStore } from "@bandeira-tech/b3nd-sdk";
+ * import { MemoryStore } from "@bandeira-tech/b3nd-save/memory";
  *
  * const store = new MemoryStore();
- *
  * await store.write([
- *   { uri: "mutable://app/config", data: { theme: "dark" } },
+ *   { uri: "mutable://app/config", payload: new TextEncoder().encode("dark") },
  * ]);
  *
- * const results = await store.read(["mutable://app/config"]);
- * console.log(results[0]?.record?.data); // { theme: "dark" }
+ * const [[, bytes]] = await store.read(["mutable://app/config"]);
+ * new TextDecoder().decode(bytes as Uint8Array); // "dark"
  * ```
  */
 
@@ -24,16 +22,18 @@ import type {
   DeleteResult,
   Output,
   StatusResult,
+} from "@bandeira-tech/b3nd-core/types";
+import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
+import { parseUrl } from "@bandeira-tech/b3nd-core/url";
+import type {
   Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
-} from "@bandeira-tech/b3nd-core/types";
-import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
-import { parseUrl } from "@bandeira-tech/b3nd-core/url";
+} from "../../types.ts";
 
-type StorageNode<T = unknown> = {
-  value?: { data: T };
+type StorageNode = {
+  value?: Uint8Array;
   children?: Map<string, StorageNode>;
 };
 
@@ -69,9 +69,7 @@ export class MemoryStore implements Store {
 
     for (const entry of entries) {
       try {
-        this._writeOne(entry.uri, {
-          data: entry.data,
-        });
+        this._writeOne(entry.uri, entry.payload);
         results.push({ success: true });
       } catch (err) {
         results.push({
@@ -84,10 +82,7 @@ export class MemoryStore implements Store {
     return Promise.resolve(results);
   }
 
-  private _writeOne(
-    uri: string,
-    record: { data: unknown },
-  ): void {
+  private _writeOne(uri: string, payload: Uint8Array): void {
     const { program, parts, node: existing } = resolveTarget(uri, this.storage);
 
     let current = existing;
@@ -107,25 +102,20 @@ export class MemoryStore implements Store {
       }
     }
 
-    current.value = record;
+    current.value = payload;
   }
 
   // ── Read ─────────────────────────────────────────────────────────
 
   // deno-lint-ignore require-await
-  async read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
-    // 1:1 with input urls. Each output is [inputUrl, payload]; payload
-    // shape varies by fn (see ProtocolInterfaceNode.read docs).
-    // `async` here turns synchronous parameter-validation throws into
-    // a rejected promise — matches the contract every other backend
-    // already satisfies via real async I/O.
+  async read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]> {
     return urls.map((url) => {
       const parsed = parseUrl(url);
       switch (parsed.fn) {
         case "read":
-          return [url, this._readOne<T>(parsed.uri) as T];
+          return [url, this._readOne(parsed.uri) as unknown as T];
         case "ls":
-          return [url, this._list<T>(parsed) as unknown as T];
+          return [url, this._list(parsed) as unknown as T];
         case "count":
           return [url, this._count(parsed) as unknown as T];
         default:
@@ -134,7 +124,7 @@ export class MemoryStore implements Store {
     });
   }
 
-  private _readOne<T>(uri: string): T | undefined {
+  private _readOne(uri: string): Uint8Array | undefined {
     const { parts, node } = resolveTarget(uri, this.storage);
     if (!node) return undefined;
 
@@ -144,8 +134,7 @@ export class MemoryStore implements Store {
       if (!current) return undefined;
     }
 
-    if (!current.value) return undefined;
-    return (current.value as { data: T }).data;
+    return current.value;
   }
 
   /**
@@ -155,7 +144,7 @@ export class MemoryStore implements Store {
    * backend in this package; clients that want recursion call
    * `ls` per level.
    */
-  private _walk(uri: string): Output[] {
+  private _walk(uri: string): Output<Uint8Array>[] {
     const { node, parts, program, path } = resolveTarget(uri, this.storage);
     if (!node) return [];
     let current: StorageNode | undefined = node;
@@ -171,23 +160,18 @@ export class MemoryStore implements Store {
       ? `${program}${path}`
       : `${program}${path}/`;
 
-    const out: Output[] = [];
+    const out: Output<Uint8Array>[] = [];
     for (const [key, child] of current.children) {
       if (child.value !== undefined) {
-        out.push([
-          `${prefix}${key}`,
-          (child.value as { data: unknown }).data,
-        ]);
+        out.push([`${prefix}${key}`, child.value]);
       }
     }
     return out;
   }
 
-  private _list<T>(parsed: ParsedUrl): Output<T>[] | string[] {
+  private _list(parsed: ParsedUrl): Output<Uint8Array>[] | string[] {
     const { params } = parsed;
 
-    // Programmer errors: unsupported params throw — option-A reserves
-    // "not found" for the absence channel.
     if (params.pattern !== undefined) {
       throw new Error("MemoryStore: pattern filter not supported");
     }
@@ -212,12 +196,8 @@ export class MemoryStore implements Store {
       entries = entries.slice(start, start + params.limit);
     }
 
-    // `format=uris` flattens to a uri list — no inner tuples, no
-    // undefined payloads. `format=full` keeps `Output<T>[]`.
-    if (format === "uris") {
-      return entries.map(([uri]) => uri);
-    }
-    return entries as Output<T>[];
+    if (format === "uris") return entries.map(([uri]) => uri);
+    return entries;
   }
 
   private _count(parsed: ParsedUrl): number {
@@ -286,9 +266,6 @@ export class MemoryStore implements Store {
   }
 
   capabilities(): StoreCapabilities {
-    return {
-      atomicBatch: false,
-      binaryData: false,
-    };
+    return { atomicBatch: false };
   }
 }
