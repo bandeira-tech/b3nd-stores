@@ -63,25 +63,26 @@ export class PostgresStore implements Store {
   // ── Write ────────────────────────────────────────────────────────
 
   async write(entries: StoreEntry[]): Promise<StoreWriteResult[]> {
-    const results: StoreWriteResult[] = [];
+    if (entries.length === 0) return [];
 
-    for (const entry of entries) {
-      try {
-        await this.executor.query(
-          `INSERT INTO ${this.tableName} (uri, payload) VALUES ($1, $2)
-           ON CONFLICT (uri) DO UPDATE SET payload = EXCLUDED.payload, updated_at = CURRENT_TIMESTAMP`,
-          [entry.uri, entry.payload],
-        );
-        results.push({ success: true });
-      } catch (err) {
-        results.push({
-          success: false,
-          error: err instanceof Error ? err.message : "Write failed",
-        });
-      }
+    // `capabilities.atomicBatch` is true: the whole batch commits or
+    // nothing does. The wire shape stays per-entry — on failure every
+    // result is `{ success: false }` with the same root-cause error.
+    try {
+      await this.executor.transaction(async (tx) => {
+        for (const entry of entries) {
+          await tx.query(
+            `INSERT INTO ${this.tableName} (uri, payload) VALUES ($1, $2)
+             ON CONFLICT (uri) DO UPDATE SET payload = EXCLUDED.payload, updated_at = CURRENT_TIMESTAMP`,
+            [entry.uri, entry.payload],
+          );
+        }
+      });
+      return entries.map(() => ({ success: true }));
+    } catch (err) {
+      const error = err instanceof Error ? err.message : "Write failed";
+      return entries.map(() => ({ success: false, error }));
     }
-
-    return results;
   }
 
   // ── Read ─────────────────────────────────────────────────────────
@@ -149,24 +150,23 @@ export class PostgresStore implements Store {
   // ── Delete ───────────────────────────────────────────────────────
 
   async delete(uris: string[]): Promise<DeleteResult[]> {
-    const results: DeleteResult[] = [];
+    if (uris.length === 0) return [];
 
-    for (const uri of uris) {
-      try {
-        await this.executor.query(
-          `DELETE FROM ${this.tableName} WHERE uri = $1`,
-          [uri],
-        );
-        results.push({ success: true });
-      } catch (err) {
-        results.push({
-          success: false,
-          error: err instanceof Error ? err.message : "Delete failed",
-        });
-      }
+    // Atomic batch: every uri either deletes together or not at all.
+    try {
+      await this.executor.transaction(async (tx) => {
+        for (const uri of uris) {
+          await tx.query(
+            `DELETE FROM ${this.tableName} WHERE uri = $1`,
+            [uri],
+          );
+        }
+      });
+      return uris.map(() => ({ success: true }));
+    } catch (err) {
+      const error = err instanceof Error ? err.message : "Delete failed";
+      return uris.map(() => ({ success: false, error }));
     }
-
-    return results;
   }
 
   // ── Status ───────────────────────────────────────────────────────
