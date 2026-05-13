@@ -9,6 +9,8 @@
 import { runSharedStoreSuite } from "../../../tests/runners/shared-store-suite.ts";
 import { FsStore } from "./store.ts";
 import type { FsExecutor } from "./mod.ts";
+import { toBytes } from "../../shared/payload.ts";
+import type { StorePayload } from "../../types.ts";
 
 /** In-memory filesystem executor that simulates file operations. */
 function createMockFsExecutor(): FsExecutor {
@@ -20,11 +22,11 @@ function createMockFsExecutor(): FsExecutor {
       if (content === undefined) {
         throw new Error(`File not found: ${path}`);
       }
-      return content;
+      return new Response(content as BodyInit).body!;
     },
 
-    writeFile: async (path: string, content: Uint8Array) => {
-      files.set(path, content);
+    writeFile: async (path: string, content: StorePayload) => {
+      files.set(path, await toBytes(content));
     },
 
     removeFile: async (path: string) => {

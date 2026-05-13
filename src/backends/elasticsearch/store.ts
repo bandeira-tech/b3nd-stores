@@ -23,6 +23,7 @@ import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
 import {
   dispatchRead,
   storageFailure,
+  toBytes,
   validateReadParams,
 } from "../../shared/mod.ts";
 import type {
@@ -100,8 +101,9 @@ export class ElasticsearchStore implements Store {
         // field. ES's default dynamic mapping for a string source
         // field produces `path` (text) + `path.keyword` (keyword);
         // we target `path.keyword` for exact-match regex push-down.
+        const bytes = await toBytes(entry.payload);
         await this.executor.index(index, docId, {
-          payload: encodeBase64(entry.payload),
+          payload: encodeBase64(bytes),
           path: docId,
         });
         results.push({ success: true });

@@ -91,7 +91,7 @@ export class FsStore implements Store {
 
   // ── Read ─────────────────────────────────────────────────────────
 
-  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]> {
+  read<T = ReadableStream<Uint8Array>>(urls: string[]): Promise<Output<T>[]> {
     return dispatchRead<T>(urls, STORE_NAME, {
       read: (p) => this._readOne(p.uri),
       ls: (p) => this._ls(p),
@@ -99,7 +99,9 @@ export class FsStore implements Store {
     });
   }
 
-  private async _readOne(uri: string): Promise<Uint8Array | undefined> {
+  private async _readOne(
+    uri: string,
+  ): Promise<ReadableStream<Uint8Array> | undefined> {
     try {
       return await this.executor.readFile(this._resolvePath(uri));
     } catch {

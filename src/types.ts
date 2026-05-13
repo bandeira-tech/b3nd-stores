@@ -6,10 +6,14 @@
  * `ProtocolInterfaceNode` to the rest of b3nd — outside the clients,
  * nothing else in the framework sees a `Store`.
  *
- * Stores are opaque byte storage: `payload: Uint8Array` in,
- * `Uint8Array` out. No JSON, no envelopes, no kind discriminators —
- * the store does not inspect content. Higher layers (protocols,
- * clients) own serialization.
+ * Stores are opaque byte storage: payloads are bytes in, bytes out.
+ * The payload type is the `Uint8Array | ReadableStream<Uint8Array>`
+ * union so callers and backends can avoid materializing large
+ * payloads when both sides know how to stream — same shape `fetch`
+ * already uses for request/response bodies. Backends that have no
+ * native streaming path collect the stream to bytes on write and
+ * return `Uint8Array` on read. Backends with native streaming
+ * (filesystem, S3, IPFS) keep streams end-to-end.
  *
  * Cross-cutting types (`Output`, `Message`, `ProtocolInterfaceNode`,
  * `DeleteResult`, `StatusResult`) still come from b3nd-core.
@@ -23,6 +27,16 @@ import type {
 } from "@bandeira-tech/b3nd-core/types";
 
 /**
+ * Payload type accepted by `write` and produced by `read`.
+ *
+ * A backend may accept either shape on write and is free to return
+ * either shape on read — pick whichever avoids buffering when
+ * possible. Callers that always want bytes can collect with
+ * `new Response(payload).bytes()` or the equivalent helper.
+ */
+export type StorePayload = Uint8Array | ReadableStream<Uint8Array>;
+
+/**
  * Entry for a batch write operation.
  *
  * @example
@@ -34,7 +48,7 @@ import type {
  */
 export interface StoreEntry {
   uri: string;
-  payload: Uint8Array;
+  payload: StorePayload;
 }
 
 /**
@@ -72,8 +86,8 @@ export interface StoreCapabilities {
  * S3 → parallel PutObject, etc.).
  *
  * The Store knows nothing about protocols, envelopes, message
- * semantics, or content shape. Read returns `Output<Uint8Array>` for
- * `fn=read` and `fn=ls&format=full`; `fn=ls&format=uris` returns
+ * semantics, or content shape. Read returns `Output<StorePayload>`
+ * for `fn=read` and `fn=ls&format=full`; `fn=ls&format=uris` returns
  * `string[]`, `fn=count` returns `number`.
  *
  * @example
@@ -84,12 +98,13 @@ export interface StoreCapabilities {
  * await store.write([
  *   { uri: "mutable://app/config", payload: new TextEncoder().encode("dark") },
  * ]);
- * const [[uri, bytes]] = await store.read<Uint8Array>(["mutable://app/config"]);
+ * const [[uri, payload]] = await store.read(["mutable://app/config"]);
+ * const bytes = await new Response(payload as StorePayload).bytes();
  * ```
  */
 export interface Store {
   write(entries: StoreEntry[]): Promise<StoreWriteResult[]>;
-  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]>;
+  read<T = StorePayload>(urls: string[]): Promise<Output<T>[]>;
   delete(uris: string[]): Promise<DeleteResult[]>;
   status(): Promise<StatusResult>;
   capabilities?(): StoreCapabilities;

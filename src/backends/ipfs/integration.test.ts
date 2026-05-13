@@ -13,6 +13,7 @@
 import { runSharedStoreSuite } from "../../../tests/runners/shared-store-suite.ts";
 import { IpfsStore } from "./store.ts";
 import type { IpfsExecutor } from "./mod.ts";
+import type { StorePayload } from "../../types.ts";
 
 const IPFS_API_URL = Deno.env.get("IPFS_API_URL") ??
   "http://localhost:55001";
@@ -21,12 +22,18 @@ function createIpfsExecutor(): IpfsExecutor {
   const base = IPFS_API_URL.replace(/\/+$/, "");
 
   return {
-    async add(content: Uint8Array): Promise<string> {
+    async add(content: StorePayload): Promise<string> {
+      // The IPFS `add` HTTP endpoint takes multipart form data. Both
+      // bytes and streams collapse into a `Blob` body chunk; the
+      // `Blob` constructor accepts either as a BlobPart, so this stays
+      // streaming-friendly when the caller provides a stream.
       const form = new FormData();
-      form.append(
-        "file",
-        new Blob([content as BlobPart], { type: "application/octet-stream" }),
-      );
+      const blob = content instanceof ReadableStream
+        ? await new Response(content).blob()
+        : new Blob([content as BlobPart], {
+          type: "application/octet-stream",
+        });
+      form.append("file", blob);
 
       const res = await fetch(`${base}/api/v0/add?pin=false&quiet=true`, {
         method: "POST",
@@ -41,7 +48,7 @@ function createIpfsExecutor(): IpfsExecutor {
       return json.Hash;
     },
 
-    async cat(cid: string): Promise<Uint8Array> {
+    async cat(cid: string): Promise<ReadableStream<Uint8Array>> {
       const res = await fetch(
         `${base}/api/v0/cat?arg=${encodeURIComponent(cid)}`,
         { method: "POST" },
@@ -51,7 +58,10 @@ function createIpfsExecutor(): IpfsExecutor {
         throw new Error(`IPFS cat failed: ${res.status} ${await res.text()}`);
       }
 
-      return new Uint8Array(await res.arrayBuffer());
+      if (!res.body) {
+        throw new Error("IPFS cat returned empty response body");
+      }
+      return res.body;
     },
 
     async pin(cid: string): Promise<void> {

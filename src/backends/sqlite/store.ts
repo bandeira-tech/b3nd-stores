@@ -19,6 +19,7 @@ import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
 import {
   dispatchRead,
   storageFailure,
+  toBytes,
   validateReadParams,
 } from "../../shared/mod.ts";
 import type {
@@ -31,7 +32,7 @@ import type { SqliteExecutor } from "./mod.ts";
 
 const STORE_NAME = "SqliteStore";
 
-function toBytes(value: unknown): Uint8Array {
+function rowToBytes(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) return value;
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   if (Array.isArray(value)) return new Uint8Array(value as number[]);
@@ -52,31 +53,38 @@ export class SqliteStore implements Store {
 
   // ── Write ────────────────────────────────────────────────────────
 
-  write(entries: StoreEntry[]): Promise<StoreWriteResult[]> {
-    if (entries.length === 0) return Promise.resolve([]);
+  async write(entries: StoreEntry[]): Promise<StoreWriteResult[]> {
+    if (entries.length === 0) return [];
+
+    // Collect streams up front: the executor is synchronous (BLOB
+    // wants bytes), and we don't want to await mid-transaction.
+    const prepared = await Promise.all(
+      entries.map(async (e) => ({
+        uri: e.uri,
+        bytes: await toBytes(e.payload),
+      })),
+    );
 
     // `capabilities.atomicBatch` is true: the whole batch commits or
     // nothing does. On failure every result is `{ success: false }`
     // with the same root-cause error.
     try {
       this.executor.transaction((tx) => {
-        for (const entry of entries) {
+        for (const entry of prepared) {
           tx.query(
             `INSERT INTO ${this.tableName} (uri, payload, updated_at)
              VALUES (?, ?, datetime('now'))
              ON CONFLICT(uri) DO UPDATE SET
                payload = excluded.payload,
                updated_at = datetime('now')`,
-            [entry.uri, entry.payload],
+            [entry.uri, entry.bytes],
           );
         }
       });
-      return Promise.resolve(entries.map(() => ({ success: true })));
+      return entries.map(() => ({ success: true }));
     } catch (err) {
       const failure = storageFailure(err, "Write failed");
-      return Promise.resolve(
-        entries.map(() => ({ success: false, ...failure })),
-      );
+      return entries.map(() => ({ success: false, ...failure }));
     }
   }
 
@@ -96,7 +104,7 @@ export class SqliteStore implements Store {
       [uri],
     );
     if (!result.rows.length) return undefined;
-    return toBytes(result.rows[0].payload);
+    return rowToBytes(result.rows[0].payload);
   }
 
   private _ls(parsed: ParsedUrl): Output[] | string[] {
@@ -123,7 +131,7 @@ export class SqliteStore implements Store {
     const rows = result.rows as Array<{ uri: string; payload?: unknown }>;
 
     if (format === "uris") return rows.map((r) => r.uri);
-    return rows.map((r): Output => [r.uri, toBytes(r.payload)]);
+    return rows.map((r): Output => [r.uri, rowToBytes(r.payload)]);
   }
 
   private _count(parsed: ParsedUrl): number {

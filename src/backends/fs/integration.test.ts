@@ -12,16 +12,29 @@ import { dirname } from "@std/path";
 import { runSharedStoreSuite } from "../../../tests/runners/shared-store-suite.ts";
 import { FsStore } from "./store.ts";
 import type { FsExecutor } from "./mod.ts";
+import type { StorePayload } from "../../types.ts";
 
 function createFsExecutor(_rootDir: string): FsExecutor {
   return {
-    async readFile(path: string): Promise<Uint8Array> {
-      return await Deno.readFile(path);
+    async readFile(path: string): Promise<ReadableStream<Uint8Array>> {
+      const file = await Deno.open(path, { read: true });
+      return file.readable;
     },
 
-    async writeFile(path: string, content: Uint8Array): Promise<void> {
+    async writeFile(path: string, content: StorePayload): Promise<void> {
       await ensureDir(dirname(path));
-      await Deno.writeFile(path, content);
+      if (content instanceof Uint8Array) {
+        await Deno.writeFile(path, content);
+        return;
+      }
+      // ReadableStream: open the file and pipe directly so large
+      // payloads never need to fit in memory.
+      const file = await Deno.open(path, {
+        write: true,
+        create: true,
+        truncate: true,
+      });
+      await content.pipeTo(file.writable);
     },
 
     async removeFile(path: string): Promise<void> {
