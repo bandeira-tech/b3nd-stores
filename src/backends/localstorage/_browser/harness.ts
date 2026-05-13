@@ -10,9 +10,9 @@
  * state between tests.
  */
 
-import { setupHarness } from "../../../../_testing/browser/deno-stub.ts";
+import { setupHarness } from "../../../../tests/helpers/browser-deno-stub.ts";
 import { LocalStorageStore } from "../store.ts";
-import { runSharedStoreSuite } from "../../../../_testing/shared-store-suite.ts";
+import { runSharedStoreSuite } from "../../../../tests/runners/shared-store-suite.ts";
 
 let testCount = 0;
 

@@ -7,7 +7,7 @@
 
 /// <reference lib="deno.ns" />
 
-import { runSharedStoreSuite } from "../../../_testing/shared-store-suite.ts";
+import { runSharedStoreSuite } from "../../../tests/runners/shared-store-suite.ts";
 import { LocalStorageStore } from "./store.ts";
 
 /**

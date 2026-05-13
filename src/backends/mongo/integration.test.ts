@@ -11,7 +11,7 @@
 /// <reference lib="deno.ns" />
 
 import { MongoClient as NativeMongoClient } from "mongodb";
-import { runSharedStoreSuite } from "../../../_testing/shared-store-suite.ts";
+import { runSharedStoreSuite } from "../../../tests/runners/shared-store-suite.ts";
 import { MongoStore } from "./store.ts";
 import type { MongoExecutor } from "./mod.ts";
 

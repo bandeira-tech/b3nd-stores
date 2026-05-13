@@ -9,7 +9,7 @@
 /// <reference lib="deno.ns" />
 
 import { assertEquals } from "@std/assert";
-import { runSharedStoreSuite } from "../../../_testing/shared-store-suite.ts";
+import { runSharedStoreSuite } from "../../../tests/runners/shared-store-suite.ts";
 import { MemoryStore } from "./store.ts";
 
 runSharedStoreSuite("MemoryStore", {

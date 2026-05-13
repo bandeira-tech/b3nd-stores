@@ -76,8 +76,7 @@
       ".npmignore",
       "src/backends/indexeddb/_browser/",
       "src/backends/localstorage/_browser/",
-      "_testing/",
-      "_integration/"
+      "tests/"
     ]
   }
 }
