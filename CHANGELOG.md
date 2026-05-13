@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.5.0 — Rename to `@bandeira-tech/b3nd-save`, `src/` layout, zero built-in protocols
+
+Public-release preparation. The package is renamed from `b3nd-stores` to
+`b3nd-save` to reflect what it actually covers — not just stores, but the whole
+data-saving layer: backends, Store→Client adapters, the URL-based backend
+factory, and the shared helpers backend authors need to stay on contract.
+
+### Breaking — package rename
+
+- `@bandeira-tech/b3nd-stores` → `@bandeira-tech/b3nd-save`. Update every import
+  path: `jsr:@bandeira-tech/b3nd-stores/postgres` becomes
+  `jsr:@bandeira-tech/b3nd-save/postgres`, and so on.
+
+### Breaking — layout
+
+- All module source moved under `src/`. The published export map is unchanged in
+  shape except for the renames below; consumers who use the documented subpaths
+  (`/postgres`, `/mongo`, …) are unaffected by the move itself, only by the
+  package rename.
+
+### Breaking — export renames
+
+- `/adapters` → `/clients`. `SimpleClient` and `DataStoreClient` move to
+  `@bandeira-tech/b3nd-save/clients`. The reframing: these are _clients_ that
+  turn `ProtocolInterfaceNode` actions into Store actions, not generic
+  "adapters."
+- `_shared` (internal) is promoted to public as `/shared`. Backend authors
+  building a custom `Store` should import `encodeBinaryForJson`,
+  `applyReadParams`, `dispatchRead` from there to stay consistent with the
+  contract every built-in backend follows.
+
+### Breaking — factory has no built-in protocols
+
+- `memory://` is no longer a built-in scheme in the factory. Every backend,
+  memory included, registers via `BackendResolver[]`. Apps that relied on
+  `createStoreFromUrl("memory://...")` working out-of-the-box must now pass a
+  memory resolver alongside their other backends.
+- `getSupportedProtocols()` returns only what the caller registered.
+- The factory itself no longer imports `MemoryStore`, so consumers using only
+  `/factory` no longer pay the memory backend's footprint.
+
+### New — root export
+
+- `import { postgres, clients, factory } from "@bandeira-tech/b3nd-save"` now
+  works. The root barrel re-exports every subpath as a namespace — convenient
+  for discoverability. Footprint-aware consumers should keep using the narrow
+  subpath imports; the namespaced barrel is opt-in.
+
+### Migration
+
+```diff
+- import { PostgresStore } from "jsr:@bandeira-tech/b3nd-stores/postgres";
+- import { SimpleClient } from "jsr:@bandeira-tech/b3nd-stores/adapters";
+- import { createStoreFromUrl } from "jsr:@bandeira-tech/b3nd-stores/factory";
++ import { PostgresStore } from "jsr:@bandeira-tech/b3nd-save/postgres";
++ import { SimpleClient } from "jsr:@bandeira-tech/b3nd-save/clients";
++ import { createStoreFromUrl, type BackendResolver } from "jsr:@bandeira-tech/b3nd-save/factory";
++ import { MemoryStore } from "jsr:@bandeira-tech/b3nd-save/memory";
++
++ const memoryResolver: BackendResolver = {
++   protocols: ["memory:"],
++   resolve: () => new MemoryStore(),
++ };
++ const store = await createStoreFromUrl("memory://", { backends: [memoryResolver] });
+```
+
 ## 0.4.0 — Absorb `MemoryStore`, Store→Client adapters, and the backend factory
 
 Cross-repo move from `@bandeira-tech/b3nd-core`. After this release,

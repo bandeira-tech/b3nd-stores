@@ -12,8 +12,8 @@
 /// <reference lib="deno.ns" />
 
 import { assertEquals } from "@std/assert";
-import { MemoryStore } from "../memory/store.ts";
-import { SimpleClient } from "../_adapters/simple-client.ts";
+import { MemoryStore } from "../src/backends/memory/store.ts";
+import { SimpleClient } from "../src/clients/simple-client.ts";
 import { Rig } from "@bandeira-tech/b3nd-core/rig";
 import { connection } from "@bandeira-tech/b3nd-core/rig";
 import type {

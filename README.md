@@ -1,8 +1,15 @@
-# @bandeira-tech/b3nd-stores
+# @bandeira-tech/b3nd-save
 
-`Store` implementations for the B3nd framework — plus the Store→Client adapters
-(`SimpleClient`, `DataStoreClient`) and the URL-based backend factory. One
-package, ten backends, one uniform contract:
+The **data-saving layer** for B3nd — everything between a node's
+`ProtocolInterfaceNode` and the storage it persists to. One package covers:
+
+- **Backends** — ten `Store` implementations on a single uniform contract.
+- **Clients** — Store→`ProtocolInterfaceNode` adapters that turn raw storage
+  into something a `Rig` can talk to.
+- **Factory** — URL-based composition so apps can wire backends at runtime
+  without coupling to specific implementations.
+- **Shared helpers** — for authors building their own backends without
+  re-deriving the contract details.
 
 ```ts
 interface Store {
@@ -15,41 +22,59 @@ interface Store {
 ```
 
 `Store` is **mechanical storage** with no protocol awareness — write, read,
-delete by uri. Wrap it with one of the adapters in
-`@bandeira-tech/b3nd-stores/adapters` (`SimpleClient`, `DataStoreClient`) to get
-a `ProtocolInterfaceNode`.
+delete by uri. Wrap it with a client from `@bandeira-tech/b3nd-save/clients`
+(`SimpleClient`, `DataStoreClient`) to get a `ProtocolInterfaceNode`.
+
+## Imports
+
+Each subpath is independent — import only what you need and the rest stays out
+of your bundle.
+
+```ts
+// Narrow imports — footprint-aware
+import { PostgresStore } from "@bandeira-tech/b3nd-save/postgres";
+import { SimpleClient } from "@bandeira-tech/b3nd-save/clients";
+import { createStoreFromUrl } from "@bandeira-tech/b3nd-save/factory";
+
+// Root barrel — convenient, namespaced
+import { clients, factory, postgres } from "@bandeira-tech/b3nd-save";
+const store = new postgres.PostgresStore("myapp", executor);
+```
 
 ## Backends
 
-| Backend       | Import                                     | Executor                               | Push-down                                       |
-| ------------- | ------------------------------------------ | -------------------------------------- | ----------------------------------------------- |
-| Memory        | `@bandeira-tech/b3nd-stores/memory`        | none                                   | recursive `_walk` (deep) — see notes            |
-| PostgreSQL    | `@bandeira-tech/b3nd-stores/postgres`      | inject any `pg`-style executor         | `ls` / `count` via `LIKE … AND NOT LIKE …%/%`   |
-| SQLite        | `@bandeira-tech/b3nd-stores/sqlite`        | inject any `@db/sqlite`-style executor | same as Postgres                                |
-| MongoDB       | `@bandeira-tech/b3nd-stores/mongo`         | inject a `MongoExecutor`               | regex filter `^<prefix>[^/]+$`                  |
-| Elasticsearch | `@bandeira-tech/b3nd-stores/elasticsearch` | inject an `ElasticsearchExecutor`      | `regexp` query + `_count` endpoint              |
-| S3            | `@bandeira-tech/b3nd-stores/s3`            | inject an `S3Executor`                 | `listObjects(prefix)` + client-side leaf filter |
-| Filesystem    | `@bandeira-tech/b3nd-stores/fs`            | inject an `FsExecutor`                 | direct-child file listing                       |
-| IPFS          | `@bandeira-tech/b3nd-stores/ipfs`          | inject an `IpfsExecutor`               | in-memory `uri → CID` index                     |
-| LocalStorage  | `@bandeira-tech/b3nd-stores/localstorage`  | injects browser `Storage`              | flat key scan                                   |
-| IndexedDB     | `@bandeira-tech/b3nd-stores/indexeddb`     | injects `indexedDB` / `IDBKeyRange`    | bounded cursor with early termination           |
+| Backend       | Import                                   | Executor                               | Push-down                                       |
+| ------------- | ---------------------------------------- | -------------------------------------- | ----------------------------------------------- |
+| Memory        | `@bandeira-tech/b3nd-save/memory`        | none                                   | recursive `_walk` (deep) — see notes            |
+| PostgreSQL    | `@bandeira-tech/b3nd-save/postgres`      | inject any `pg`-style executor         | `ls` / `count` via `LIKE … AND NOT LIKE …%/%`   |
+| SQLite        | `@bandeira-tech/b3nd-save/sqlite`        | inject any `@db/sqlite`-style executor | same as Postgres                                |
+| MongoDB       | `@bandeira-tech/b3nd-save/mongo`         | inject a `MongoExecutor`               | regex filter `^<prefix>[^/]+$`                  |
+| Elasticsearch | `@bandeira-tech/b3nd-save/elasticsearch` | inject an `ElasticsearchExecutor`      | `regexp` query + `_count` endpoint              |
+| S3            | `@bandeira-tech/b3nd-save/s3`            | inject an `S3Executor`                 | `listObjects(prefix)` + client-side leaf filter |
+| Filesystem    | `@bandeira-tech/b3nd-save/fs`            | inject an `FsExecutor`                 | direct-child file listing                       |
+| IPFS          | `@bandeira-tech/b3nd-save/ipfs`          | inject an `IpfsExecutor`               | in-memory `uri → CID` index                     |
+| LocalStorage  | `@bandeira-tech/b3nd-save/localstorage`  | injects browser `Storage`              | flat key scan                                   |
+| IndexedDB     | `@bandeira-tech/b3nd-save/indexeddb`     | injects `indexedDB` / `IDBKeyRange`    | bounded cursor with early termination           |
 
 > **Memory ls/count semantics differ.** Every other backend in this package
 > implements `fn=ls` / `fn=count` as _shallow direct-leaves only_. `MemoryStore`
 > walks recursively (deep) — it predates the shallow convention and is kept that
-> way as the canonical reference for the rig backend factory and as a
-> deterministic stand-in for tests. If you need shallow semantics in-memory,
-> layer a thin shallow-only wrapper over a `Map`.
+> way as a deterministic stand-in for tests and prototypes. If you need shallow
+> semantics in-memory, layer a thin shallow-only wrapper over a `Map`.
 
-## Adapters and factory
+## Clients and factory
 
-- **`@bandeira-tech/b3nd-stores/adapters`** — `SimpleClient` and
-  `DataStoreClient`. These wrap any `Store` to produce a `ProtocolInterfaceNode`
-  that a `Rig` can talk to.
-- **`@bandeira-tech/b3nd-stores/factory`** — `createStoreFromUrl`,
-  `createClientFromUrl`, and resolver factories. Maps URL schemes (`memory://`,
-  plus your registered backends, plus core's transport schemes
-  `https://`/`wss://`/`console://`) to Stores or clients.
+- **`@bandeira-tech/b3nd-save/clients`** — `SimpleClient` and `DataStoreClient`.
+  These wrap any `Store` to produce a `ProtocolInterfaceNode` that a `Rig` can
+  talk to.
+- **`@bandeira-tech/b3nd-save/factory`** — `createStoreFromUrl`,
+  `createClientFromUrl`, `createStoreResolver`, `createClientResolver`. Maps URL
+  schemes to Stores or clients. **No protocols are built-in** — every backend
+  (memory included) plugs in via `BackendResolver[]`. The factory resolves only
+  what you register.
+- **`@bandeira-tech/b3nd-save/shared`** — helpers for backend authors: binary
+  encode/decode, read-param validation, read-dispatch. Use these when
+  implementing a new `Store` so it matches the contract the built-ins follow.
 
 ## Quick start (Postgres)
 
@@ -57,7 +82,7 @@ a `ProtocolInterfaceNode`.
 import {
   generatePostgresSchema,
   PostgresStore,
-} from "jsr:@bandeira-tech/b3nd-stores/postgres";
+} from "jsr:@bandeira-tech/b3nd-save/postgres";
 
 // 1. Initialise the schema (one-time)
 await myDb.query(generatePostgresSchema("myapp"));
@@ -128,7 +153,7 @@ Throws on `pattern`, `cursor`, unknown `sortBy`, and unknown `format`.
 ## Testing
 
 - `deno task test` — runs every store's unit suite (32 tests each) against an
-  in-memory mock, plus the adapter and factory tests and the `_integration/`
+  in-memory mock, plus the client and factory tests and the `_integration/`
   framework+memory integration suite.
 - `deno task test:integration:{postgres,mongo,sqlite,fs,ipfs,s3,elasticsearch}`
   — runs the same 32 tests against real backends. Started in CI; locally

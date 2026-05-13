@@ -1,11 +1,11 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { Identity } from "@bandeira-tech/b3nd-core/identity";
-import { getSupportedProtocols } from "../factory/factory.ts";
-import type { BackendResolver } from "../factory/factory.ts";
+import { getSupportedProtocols } from "../src/factory/factory.ts";
+import type { BackendResolver } from "../src/factory/factory.ts";
 import { Rig } from "@bandeira-tech/b3nd-core/rig";
 import type { Program } from "@bandeira-tech/b3nd-core/types";
-import { MemoryStore } from "../memory/store.ts";
-import { DataStoreClient } from "../_adapters/data-store-client.ts";
+import { MemoryStore } from "../src/backends/memory/store.ts";
+import { DataStoreClient } from "../src/clients/data-store-client.ts";
 import { connection } from "@bandeira-tech/b3nd-core/rig";
 
 async function readData<T>(rig: Rig, url: string): Promise<T | null> {
@@ -17,6 +17,15 @@ async function readData<T>(rig: Rig, url: string): Promise<T | null> {
 function memClient() {
   return new DataStoreClient(new MemoryStore());
 }
+
+/**
+ * Memory backend resolver — the factory no longer ships built-in
+ * protocols, so factory-based tests register this explicitly.
+ */
+const memoryResolver: BackendResolver = {
+  protocols: ["memory:"],
+  resolve: () => new MemoryStore(),
+};
 
 /**
  * Create a permissive test program set that classifies every message
@@ -444,26 +453,23 @@ Deno.test("Identity.decrypt - throws for public-only identity", async () => {
 
 // ── getSupportedProtocols tests ──
 
-Deno.test("getSupportedProtocols - returns built-in storage protocols with no backends", () => {
+Deno.test("getSupportedProtocols - empty without registered backends", () => {
   const protocols = getSupportedProtocols();
-  assertEquals(protocols.includes("memory://"), true);
-  // Transport schemes are out of scope for this factory now.
-  assertEquals(protocols.includes("http://"), false);
-  assertEquals(protocols.includes("ws://"), false);
-  assertEquals(protocols.includes("console://"), false);
-  // External backends not included without registration
-  assertEquals(protocols.includes("postgresql://"), false);
+  assertEquals(protocols.length, 0);
 });
 
-Deno.test("getSupportedProtocols - includes registered backends", () => {
+Deno.test("getSupportedProtocols - lists only registered backends", () => {
   const fakeBackend: BackendResolver = {
     protocols: ["postgresql:", "postgres:"],
     resolve: () => new MemoryStore(),
   };
-  const protocols = getSupportedProtocols([fakeBackend]);
-  assertEquals(protocols.includes("memory://"), true);
+  const protocols = getSupportedProtocols([fakeBackend, memoryResolver]);
   assertEquals(protocols.includes("postgresql://"), true);
   assertEquals(protocols.includes("postgres://"), true);
+  assertEquals(protocols.includes("memory://"), true);
+  // Transport schemes never appear — out of factory scope.
+  assertEquals(protocols.includes("http://"), false);
+  assertEquals(protocols.includes("ws://"), false);
 });
 
 // Rig.init no longer exists — unsupported protocol test removed
@@ -704,8 +710,10 @@ Deno.test("Rig.read - handles empty URI array", async () => {
 // ── createClientFromUrl tests ──
 
 Deno.test("createClientFromUrl - creates memory client from URL", async () => {
-  const { createClientFromUrl } = await import("../factory/factory.ts");
-  const client = await createClientFromUrl("memory://");
+  const { createClientFromUrl } = await import("../src/factory/factory.ts");
+  const client = await createClientFromUrl("memory://", {
+    backends: [memoryResolver],
+  });
   const health = await client.status();
   assertEquals(health.status, "healthy");
 
@@ -717,7 +725,7 @@ Deno.test("createClientFromUrl - creates memory client from URL", async () => {
 });
 
 Deno.test("createClientFromUrl - rejects unknown protocol", async () => {
-  const { createClientFromUrl } = await import("../factory/factory.ts");
+  const { createClientFromUrl } = await import("../src/factory/factory.ts");
   await assertRejects(
     () => createClientFromUrl("ftp://example.com"),
     Error,
@@ -1165,7 +1173,7 @@ Deno.test("Rig - multi-connection dispatch with programs rejects via rejecter", 
 // ── No-backend-registered rejection tests (createClientFromUrl) ──
 
 Deno.test("createClientFromUrl - rejects postgresql without registered backend", async () => {
-  const { createClientFromUrl } = await import("../factory/factory.ts");
+  const { createClientFromUrl } = await import("../src/factory/factory.ts");
   await assertRejects(
     () => createClientFromUrl("postgresql://localhost/db"),
     Error,
@@ -1174,7 +1182,7 @@ Deno.test("createClientFromUrl - rejects postgresql without registered backend",
 });
 
 Deno.test("createClientFromUrl - rejects mongodb without registered backend", async () => {
-  const { createClientFromUrl } = await import("../factory/factory.ts");
+  const { createClientFromUrl } = await import("../src/factory/factory.ts");
   await assertRejects(
     () => createClientFromUrl("mongodb://localhost/db"),
     Error,
@@ -1183,7 +1191,7 @@ Deno.test("createClientFromUrl - rejects mongodb without registered backend", as
 });
 
 Deno.test("createClientFromUrl - rejects sqlite without registered backend", async () => {
-  const { createClientFromUrl } = await import("../factory/factory.ts");
+  const { createClientFromUrl } = await import("../src/factory/factory.ts");
   await assertRejects(
     () => createClientFromUrl("sqlite:///tmp/test.db"),
     Error,
@@ -1194,8 +1202,10 @@ Deno.test("createClientFromUrl - rejects sqlite without registered backend", asy
 // ── createStoreFromUrl tests ──
 
 Deno.test("createStoreFromUrl - creates memory store", async () => {
-  const { createStoreFromUrl } = await import("../factory/factory.ts");
-  const store = await createStoreFromUrl("memory://");
+  const { createStoreFromUrl } = await import("../src/factory/factory.ts");
+  const store = await createStoreFromUrl("memory://", {
+    backends: [memoryResolver],
+  });
 
   await store.write([
     { uri: "store://test/key", data: { values: { fire: 10 }, val: 1 } },
@@ -1210,7 +1220,7 @@ Deno.test("createStoreFromUrl - creates memory store", async () => {
 // directly. The factory rejects them as unsupported storage protocols.
 
 Deno.test("createStoreFromUrl - rejects console URL", async () => {
-  const { createStoreFromUrl } = await import("../factory/factory.ts");
+  const { createStoreFromUrl } = await import("../src/factory/factory.ts");
   await assertRejects(
     () => createStoreFromUrl("console://debug"),
     Error,
@@ -1219,7 +1229,7 @@ Deno.test("createStoreFromUrl - rejects console URL", async () => {
 });
 
 Deno.test("createStoreFromUrl - rejects http URL", async () => {
-  const { createStoreFromUrl } = await import("../factory/factory.ts");
+  const { createStoreFromUrl } = await import("../src/factory/factory.ts");
   await assertRejects(
     () => createStoreFromUrl("http://example.com"),
     Error,
@@ -1228,7 +1238,7 @@ Deno.test("createStoreFromUrl - rejects http URL", async () => {
 });
 
 Deno.test("createStoreFromUrl - rejects ws URL", async () => {
-  const { createStoreFromUrl } = await import("../factory/factory.ts");
+  const { createStoreFromUrl } = await import("../src/factory/factory.ts");
   await assertRejects(
     () => createStoreFromUrl("ws://example.com"),
     Error,
@@ -1237,7 +1247,7 @@ Deno.test("createStoreFromUrl - rejects ws URL", async () => {
 });
 
 Deno.test("createStoreFromUrl - rejects postgresql without registered backend", async () => {
-  const { createStoreFromUrl } = await import("../factory/factory.ts");
+  const { createStoreFromUrl } = await import("../src/factory/factory.ts");
   await assertRejects(
     () => createStoreFromUrl("postgresql://localhost/db"),
     Error,
@@ -1246,7 +1256,7 @@ Deno.test("createStoreFromUrl - rejects postgresql without registered backend", 
 });
 
 Deno.test("createStoreFromUrl - rejects unknown protocol", async () => {
-  const { createStoreFromUrl } = await import("../factory/factory.ts");
+  const { createStoreFromUrl } = await import("../src/factory/factory.ts");
   await assertRejects(
     () => createStoreFromUrl("ftp://example.com"),
     Error,
@@ -1257,33 +1267,38 @@ Deno.test("createStoreFromUrl - rejects unknown protocol", async () => {
 // ── createClientFromUrl with client class arg ──
 
 Deno.test("createClientFromUrl - accepts client class arg", async () => {
-  const { createClientFromUrl } = await import("../factory/factory.ts");
+  const { createClientFromUrl } = await import("../src/factory/factory.ts");
   const { DataStoreClient } = await import(
-    "../_adapters/data-store-client.ts"
+    "../src/clients/data-store-client.ts"
   );
 
-  const client = await createClientFromUrl("memory://", DataStoreClient);
+  const client = await createClientFromUrl("memory://", DataStoreClient, {
+    backends: [memoryResolver],
+  });
   const health = await client.status();
   assertEquals(health.status, "healthy");
 });
 
 Deno.test("createClientFromUrl - client class in options", async () => {
-  const { createClientFromUrl } = await import("../factory/factory.ts");
+  const { createClientFromUrl } = await import("../src/factory/factory.ts");
   const { DataStoreClient } = await import(
-    "../_adapters/data-store-client.ts"
+    "../src/clients/data-store-client.ts"
   );
 
   const client = await createClientFromUrl("memory://", {
     client: DataStoreClient,
+    backends: [memoryResolver],
   });
   const health = await client.status();
   assertEquals(health.status, "healthy");
 });
 
 Deno.test("createClientFromUrl - defaults to SimpleClient for storage", async () => {
-  const { createClientFromUrl } = await import("../factory/factory.ts");
+  const { createClientFromUrl } = await import("../src/factory/factory.ts");
 
-  const client = await createClientFromUrl("memory://");
+  const client = await createClientFromUrl("memory://", {
+    backends: [memoryResolver],
+  });
   const health = await client.status();
   assertEquals(health.status, "healthy");
 
@@ -1295,10 +1310,10 @@ Deno.test("createClientFromUrl - defaults to SimpleClient for storage", async ()
 
 // ── createStoreResolver tests ──
 
-Deno.test("createStoreResolver - binds executors once, resolves many URLs", async () => {
-  const { createStoreResolver } = await import("../factory/factory.ts");
+Deno.test("createStoreResolver - binds backends once, resolves many URLs", async () => {
+  const { createStoreResolver } = await import("../src/factory/factory.ts");
 
-  const resolveStore = createStoreResolver();
+  const resolveStore = createStoreResolver([memoryResolver]);
 
   // Resolve multiple memory stores from a single resolver
   const stores = await Promise.all([
@@ -1315,9 +1330,9 @@ Deno.test("createStoreResolver - binds executors once, resolves many URLs", asyn
 });
 
 Deno.test("createStoreResolver - rejects transport protocols", async () => {
-  const { createStoreResolver } = await import("../factory/factory.ts");
+  const { createStoreResolver } = await import("../src/factory/factory.ts");
 
-  const resolveStore = createStoreResolver();
+  const resolveStore = createStoreResolver([memoryResolver]);
   await assertRejects(
     () => resolveStore("http://example.com"),
     Error,
@@ -1328,9 +1343,10 @@ Deno.test("createStoreResolver - rejects transport protocols", async () => {
 // ── createClientResolver tests ──
 
 Deno.test("createClientResolver - resolves memory URL with default SimpleClient", async () => {
-  const { createClientResolver } = await import("../factory/factory.ts");
+  const { createClientResolver } = await import("../src/factory/factory.ts");
+  const { SimpleClient } = await import("../src/clients/simple-client.ts");
 
-  const resolveClient = createClientResolver();
+  const resolveClient = createClientResolver(SimpleClient, [memoryResolver]);
   const client = await resolveClient("memory://");
   const health = await client.status();
   assertEquals(health.status, "healthy");
@@ -1342,21 +1358,22 @@ Deno.test("createClientResolver - resolves memory URL with default SimpleClient"
 });
 
 Deno.test("createClientResolver - resolves with DataStoreClient", async () => {
-  const { createClientResolver } = await import("../factory/factory.ts");
+  const { createClientResolver } = await import("../src/factory/factory.ts");
   const { DataStoreClient } = await import(
-    "../_adapters/data-store-client.ts"
+    "../src/clients/data-store-client.ts"
   );
 
-  const resolveClient = createClientResolver(DataStoreClient);
+  const resolveClient = createClientResolver(DataStoreClient, [memoryResolver]);
   const client = await resolveClient("memory://");
   const health = await client.status();
   assertEquals(health.status, "healthy");
 });
 
 Deno.test("createClientResolver - maps multiple URLs", async () => {
-  const { createClientResolver } = await import("../factory/factory.ts");
+  const { createClientResolver } = await import("../src/factory/factory.ts");
+  const { SimpleClient } = await import("../src/clients/simple-client.ts");
 
-  const resolveClient = createClientResolver();
+  const resolveClient = createClientResolver(SimpleClient, [memoryResolver]);
   const urls = ["memory://", "memory://", "memory://"];
   const clients = await Promise.all(urls.map(resolveClient));
 
@@ -1370,7 +1387,7 @@ Deno.test("createClientResolver - maps multiple URLs", async () => {
 // ── BackendResolver registry tests ──
 
 Deno.test("createStoreFromUrl - resolves registered backend", async () => {
-  const { createStoreFromUrl } = await import("../factory/factory.ts");
+  const { createStoreFromUrl } = await import("../src/factory/factory.ts");
 
   const fakeBackend: BackendResolver = {
     protocols: ["fake:"],
@@ -1385,7 +1402,7 @@ Deno.test("createStoreFromUrl - resolves registered backend", async () => {
 });
 
 Deno.test("createClientFromUrl - resolves registered backend", async () => {
-  const { createClientFromUrl } = await import("../factory/factory.ts");
+  const { createClientFromUrl } = await import("../src/factory/factory.ts");
 
   const fakeBackend: BackendResolver = {
     protocols: ["fake:"],
@@ -1400,7 +1417,7 @@ Deno.test("createClientFromUrl - resolves registered backend", async () => {
 });
 
 Deno.test("createStoreResolver - passes backends through", async () => {
-  const { createStoreResolver } = await import("../factory/factory.ts");
+  const { createStoreResolver } = await import("../src/factory/factory.ts");
 
   const fakeBackend: BackendResolver = {
     protocols: ["fake:"],
