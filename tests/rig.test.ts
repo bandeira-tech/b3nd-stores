@@ -716,9 +716,11 @@ Deno.test("Rig.read - handles empty URI array", async () => {
 
 Deno.test("createClientFromUrl - creates memory client from URL", async () => {
   const { createClientFromUrl } = await import("../src/factory/factory.ts");
-  const client = await createClientFromUrl("memory://", {
-    backends: [memoryResolver],
-  });
+  const client = new JsonClient(
+    await createClientFromUrl("memory://", {
+      backends: [memoryResolver],
+    }),
+  );
   const health = await client.status();
   assertEquals(health.status, "healthy");
 

@@ -25,7 +25,7 @@ import type {
 } from "@bandeira-tech/b3nd-core/types";
 import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
 import { parseUrl } from "@bandeira-tech/b3nd-core/url";
-import { storageFailure } from "../../shared/mod.ts";
+import { storageFailure, toBytes } from "../../shared/mod.ts";
 import type {
   Store,
   StoreCapabilities,
@@ -65,12 +65,16 @@ export class MemoryStore implements Store {
 
   // ── Write ────────────────────────────────────────────────────────
 
-  write(entries: StoreEntry[]): Promise<StoreWriteResult[]> {
+  async write(entries: StoreEntry[]): Promise<StoreWriteResult[]> {
     const results: StoreWriteResult[] = [];
 
     for (const entry of entries) {
       try {
-        this._writeOne(entry.uri, entry.payload);
+        // Collect any stream upfront so storage is plain bytes; the
+        // memory map can only hold a Uint8Array (a ReadableStream is
+        // not structured-cloneable and would only be readable once).
+        const bytes = await toBytes(entry.payload);
+        this._writeOne(entry.uri, bytes);
         results.push({ success: true });
       } catch (err) {
         results.push({
@@ -80,7 +84,7 @@ export class MemoryStore implements Store {
       }
     }
 
-    return Promise.resolve(results);
+    return results;
   }
 
   private _writeOne(uri: string, payload: Uint8Array): void {

@@ -20,6 +20,7 @@ import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
 import {
   dispatchRead,
   storageFailure,
+  toBytes,
   validateReadParams,
 } from "../../shared/mod.ts";
 import type {
@@ -37,7 +38,7 @@ const STORE_NAME = "PostgresStore";
  * driver returns `Buffer`; some pools/wrappers return a hex-prefixed
  * string ("\\x..."). We accept both.
  */
-function toBytes(value: unknown): Uint8Array {
+function rowToBytes(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) return value;
   if (typeof value === "string" && value.startsWith("\\x")) {
     const hex = value.slice(2);
@@ -72,13 +73,22 @@ export class PostgresStore implements Store {
     // `capabilities.atomicBatch` is true: the whole batch commits or
     // nothing does. The wire shape stays per-entry — on failure every
     // result is `{ success: false }` with the same root-cause error.
+    // Collect streams before the transaction starts: BYTEA wants
+    // bytes, and we don't want a stream to fail mid-transaction.
+    const prepared = await Promise.all(
+      entries.map(async (e) => ({
+        uri: e.uri,
+        bytes: await toBytes(e.payload),
+      })),
+    );
+
     try {
       await this.executor.transaction(async (tx) => {
-        for (const entry of entries) {
+        for (const entry of prepared) {
           await tx.query(
             `INSERT INTO ${this.tableName} (uri, payload) VALUES ($1, $2)
              ON CONFLICT (uri) DO UPDATE SET payload = EXCLUDED.payload, updated_at = CURRENT_TIMESTAMP`,
-            [entry.uri, entry.payload],
+            [entry.uri, entry.bytes],
           );
         }
       });
@@ -106,7 +116,7 @@ export class PostgresStore implements Store {
     );
     if (!res.rows || res.rows.length === 0) return undefined;
     const row = res.rows[0] as { payload: unknown };
-    return toBytes(row.payload);
+    return rowToBytes(row.payload);
   }
 
   private async _ls(parsed: ParsedUrl): Promise<Output[] | string[]> {
@@ -136,7 +146,7 @@ export class PostgresStore implements Store {
     const rows = (res.rows ?? []) as Array<{ uri: string; payload?: unknown }>;
 
     if (format === "uris") return rows.map((r) => r.uri);
-    return rows.map((r): Output => [r.uri, toBytes(r.payload)]);
+    return rows.map((r): Output => [r.uri, rowToBytes(r.payload)]);
   }
 
   private async _count(parsed: ParsedUrl): Promise<number> {

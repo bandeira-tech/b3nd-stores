@@ -20,6 +20,7 @@ import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
 import {
   dispatchRead,
   storageFailure,
+  toBytes,
   validateReadParams,
 } from "../../shared/mod.ts";
 import type {
@@ -172,7 +173,7 @@ export class IndexedDBStore implements Store {
         try {
           const record: StoredRecord = {
             uri: entry.uri,
-            payload: entry.payload,
+            payload: await toBytes(entry.payload),
           };
           await new Promise<void>((resolve, reject) => {
             const request = store.put(record);

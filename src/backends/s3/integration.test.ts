@@ -15,6 +15,7 @@
 import { runSharedStoreSuite } from "../../../tests/runners/shared-store-suite.ts";
 import { S3Store } from "./store.ts";
 import type { S3Executor } from "./mod.ts";
+import type { StorePayload } from "../../types.ts";
 
 const S3_ENDPOINT = Deno.env.get("S3_ENDPOINT") ??
   "http://localhost:59000";
@@ -28,7 +29,7 @@ function createS3Executor(): S3Executor {
   return {
     async putObject(
       key: string,
-      body: Uint8Array,
+      body: StorePayload,
       contentType: string,
     ): Promise<void> {
       const res = await fetch(url(key), {
@@ -43,7 +44,9 @@ function createS3Executor(): S3Executor {
       await res.text();
     },
 
-    async getObject(key: string): Promise<Uint8Array | null> {
+    async getObject(
+      key: string,
+    ): Promise<ReadableStream<Uint8Array> | null> {
       const res = await fetch(url(key), { method: "GET" });
       if (res.status === 404) {
         await res.text();
@@ -53,7 +56,9 @@ function createS3Executor(): S3Executor {
         const text = await res.text();
         throw new Error(`S3 GET failed: ${res.status} ${text}`);
       }
-      return new Uint8Array(await res.arrayBuffer());
+      // `res.body` is already a `ReadableStream<Uint8Array>` — return
+      // it directly so large objects don't need to fit in memory.
+      return res.body;
     },
 
     async deleteObject(key: string): Promise<void> {

@@ -10,7 +10,9 @@
  * - capabilities()                                 → StoreCapabilities (optional)
  *
  * Conventions enforced here:
- * - `payload` is **always** `Uint8Array` — Stores never inspect content.
+ * - `payload` is `Uint8Array | ReadableStream<Uint8Array>` end-to-end —
+ *   Stores never inspect content. The suite collects either shape into
+ *   `Uint8Array` for assertions via `payloadBytes`.
  * - `fn=read` miss → payload is `undefined`.
  * - `fn=ls` is SHALLOW: direct leaves only (entries whose uri is
  *   `prefix + <segment>` with no further `/`). Subtree-only entries
@@ -53,19 +55,33 @@ function uriOf(out: Output): string {
   return out[0];
 }
 
-function assertBytesEqual(
+/**
+ * Collect a `Uint8Array | ReadableStream<Uint8Array>` payload to
+ * bytes. The shared suite asserts byte-level equality regardless of
+ * which shape the backend returned (buffered backends yield
+ * `Uint8Array`; streamer backends yield `ReadableStream`).
+ */
+async function payloadBytes(value: unknown): Promise<Uint8Array> {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ReadableStream) {
+    return new Uint8Array(
+      await new Response(value as BodyInit).arrayBuffer(),
+    );
+  }
+  throw new Error(
+    `expected Uint8Array | ReadableStream, got ${
+      value === null ? "null" : typeof value
+    }`,
+  );
+}
+
+async function assertBytesEqual(
   actual: unknown,
   expected: Uint8Array,
   msg?: string,
-): void {
-  if (!(actual instanceof Uint8Array)) {
-    throw new Error(
-      `${msg ?? "expected Uint8Array"}, got ${
-        actual === null ? "null" : typeof actual
-      }`,
-    );
-  }
-  assertEquals(Array.from(actual), Array.from(expected), msg);
+): Promise<void> {
+  const bytes = await payloadBytes(actual);
+  assertEquals(Array.from(bytes), Array.from(expected), msg);
 }
 
 export function runSharedStoreSuite(
@@ -123,7 +139,7 @@ export function runSharedStoreSuite(
     const results = await store.read(["store://app/config"]);
     assertEquals(results.length, 1);
     assertEquals(uriOf(results[0]), "store://app/config");
-    assertBytesEqual(payloadOf(results[0]), enc("dark"));
+    await assertBytesEqual(payloadOf(results[0]), enc("dark"));
   });
 
   t("batch read returns one Output per input url, in order", async () => {
@@ -137,9 +153,9 @@ export function runSharedStoreSuite(
     const results = await store.read(urls);
     assertEquals(results.length, 3);
     assertEquals(results.map(uriOf), urls);
-    assertBytesEqual(payloadOf(results[0]), enc("A"));
-    assertBytesEqual(payloadOf(results[1]), enc("B"));
-    assertBytesEqual(payloadOf(results[2]), enc("C"));
+    await assertBytesEqual(payloadOf(results[0]), enc("A"));
+    await assertBytesEqual(payloadOf(results[1]), enc("B"));
+    await assertBytesEqual(payloadOf(results[2]), enc("C"));
   });
 
   t("write overwrites existing value", async () => {
@@ -147,7 +163,7 @@ export function runSharedStoreSuite(
     await store.write([{ uri: "store://app/x", payload: enc("old") }]);
     await store.write([{ uri: "store://app/x", payload: enc("new") }]);
     const results = await store.read(["store://app/x"]);
-    assertBytesEqual(payloadOf(results[0]), enc("new"));
+    await assertBytesEqual(payloadOf(results[0]), enc("new"));
   });
 
   // ── Binary payload shapes ─────────────────────────────────────────
@@ -158,7 +174,7 @@ export function runSharedStoreSuite(
       { uri: "store://bytes/empty", payload: new Uint8Array(0) },
     ]);
     const results = await store.read(["store://bytes/empty"]);
-    assertBytesEqual(payloadOf(results[0]), new Uint8Array(0));
+    await assertBytesEqual(payloadOf(results[0]), new Uint8Array(0));
   });
 
   t("read/write payload covering all byte values", async () => {
@@ -167,7 +183,7 @@ export function runSharedStoreSuite(
     for (let i = 0; i < 256; i++) all[i] = i;
     await store.write([{ uri: "store://bytes/all", payload: all }]);
     const results = await store.read(["store://bytes/all"]);
-    assertBytesEqual(payloadOf(results[0]), all);
+    await assertBytesEqual(payloadOf(results[0]), all);
   });
 
   t("read/write large payload (32 KB random bytes)", async () => {
@@ -175,7 +191,16 @@ export function runSharedStoreSuite(
     const big = crypto.getRandomValues(new Uint8Array(32 * 1024));
     await store.write([{ uri: "store://bytes/big", payload: big }]);
     const results = await store.read(["store://bytes/big"]);
-    assertBytesEqual(payloadOf(results[0]), big);
+    await assertBytesEqual(payloadOf(results[0]), big);
+  });
+
+  t("write accepts a ReadableStream payload", async () => {
+    const store = await Promise.resolve(config.create());
+    const expected = enc("streamed content");
+    const stream = new Response(expected as BodyInit).body!;
+    await store.write([{ uri: "store://stream/x", payload: stream }]);
+    const results = await store.read(["store://stream/x"]);
+    await assertBytesEqual(payloadOf(results[0]), expected);
   });
 
   // ── Miss convention: payload === undefined ────────────────────────
@@ -197,7 +222,7 @@ export function runSharedStoreSuite(
     const results = await store.read(urls);
     assertEquals(results.length, 2);
     assertEquals(uriOf(results[0]), "store://app/exists");
-    assertBytesEqual(payloadOf(results[0]), enc("yes"));
+    await assertBytesEqual(payloadOf(results[0]), enc("yes"));
     assertEquals(uriOf(results[1]), "store://app/missing");
     assertEquals(payloadOf(results[1]), undefined);
   });
@@ -210,7 +235,7 @@ export function runSharedStoreSuite(
     const url = "store://app/x?fn=read";
     const results = await store.read([url]);
     assertEquals(uriOf(results[0]), url);
-    assertBytesEqual(payloadOf(results[0]), enc("v"));
+    await assertBytesEqual(payloadOf(results[0]), enc("v"));
   });
 
   // ── ls (trailing slash / fn=ls) ───────────────────────────────────
@@ -409,7 +434,7 @@ export function runSharedStoreSuite(
       "store://app/c",
     ]);
     assertEquals(payloadOf(results[0]), undefined);
-    assertBytesEqual(payloadOf(results[1]), enc("B"));
+    await assertBytesEqual(payloadOf(results[1]), enc("B"));
     assertEquals(payloadOf(results[2]), undefined);
   });
 

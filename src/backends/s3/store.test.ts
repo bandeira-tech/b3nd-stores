@@ -9,18 +9,26 @@
 import { runSharedStoreSuite } from "../../../tests/runners/shared-store-suite.ts";
 import { S3Store } from "./store.ts";
 import type { S3Executor } from "./mod.ts";
+import { toBytes } from "../../shared/payload.ts";
+import type { StorePayload } from "../../types.ts";
 
 /** In-memory S3 executor that simulates S3 bucket operations. */
 function createMockS3Executor(): S3Executor {
   const objects = new Map<string, Uint8Array>();
 
   return {
-    putObject: async (key: string, body: Uint8Array, _contentType: string) => {
-      objects.set(key, body);
+    putObject: async (
+      key: string,
+      body: StorePayload,
+      _contentType: string,
+    ) => {
+      objects.set(key, await toBytes(body));
     },
 
-    getObject: async (key: string) => {
-      return objects.get(key) ?? null;
+    getObject: (key: string) => {
+      const bytes = objects.get(key);
+      if (bytes === undefined) return Promise.resolve(null);
+      return Promise.resolve(new Response(bytes as BodyInit).body!);
     },
 
     deleteObject: async (key: string) => {

@@ -9,6 +9,8 @@
 import { runSharedStoreSuite } from "../../../tests/runners/shared-store-suite.ts";
 import { IpfsStore } from "./store.ts";
 import type { IpfsExecutor } from "./mod.ts";
+import { toBytes } from "../../shared/payload.ts";
+import type { StorePayload } from "../../types.ts";
 
 /** In-memory IPFS executor that simulates IPFS node operations. */
 function createMockIpfsExecutor(): IpfsExecutor {
@@ -17,18 +19,18 @@ function createMockIpfsExecutor(): IpfsExecutor {
   let cidCounter = 0;
 
   return {
-    add: async (content: Uint8Array) => {
+    add: async (content: StorePayload) => {
       const cid = `QmTest${++cidCounter}`;
-      objects.set(cid, content);
+      objects.set(cid, await toBytes(content));
       return cid;
     },
 
-    cat: async (cid: string) => {
+    cat: (cid: string) => {
       const content = objects.get(cid);
       if (content === undefined) {
         throw new Error(`CID not found: ${cid}`);
       }
-      return content;
+      return Promise.resolve(new Response(content as BodyInit).body!);
     },
 
     pin: async (cid: string) => {

@@ -19,6 +19,7 @@ import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
 import {
   dispatchRead,
   storageFailure,
+  toBytes,
   validateReadParams,
 } from "../../shared/mod.ts";
 import type {
@@ -41,7 +42,7 @@ function escapeRegex(input: string): string {
  * surface BSON `Binary` (which exposes `.buffer`) or a raw
  * `Uint8Array` depending on options.
  */
-function toBytes(value: unknown): Uint8Array {
+function docToBytes(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) return value;
   if (
     value && typeof value === "object" &&
@@ -79,12 +80,13 @@ export class MongoStore implements Store {
 
     for (const entry of entries) {
       try {
+        const bytes = await toBytes(entry.payload);
         await this.executor.updateOne(
           { uri: entry.uri },
           {
             $set: {
               uri: entry.uri,
-              payload: entry.payload,
+              payload: bytes,
               updatedAt: new Date(),
             },
           },
@@ -115,7 +117,7 @@ export class MongoStore implements Store {
   private async _readOne(uri: string): Promise<Uint8Array | undefined> {
     const doc = await this.executor.findOne({ uri });
     if (!doc) return undefined;
-    return toBytes(doc.payload);
+    return docToBytes(doc.payload);
   }
 
   /** Build the shallow-direct-leaves regex filter for a prefix. */
@@ -147,7 +149,7 @@ export class MongoStore implements Store {
     );
 
     if (format === "uris") return docs.map((d) => d.uri as string);
-    return docs.map((d): Output => [d.uri as string, toBytes(d.payload)]);
+    return docs.map((d): Output => [d.uri as string, docToBytes(d.payload)]);
   }
 
   private async _count(parsed: ParsedUrl): Promise<number> {

@@ -17,6 +17,7 @@ import {
   applyReadParams,
   dispatchRead,
   storageFailure,
+  toBytes,
 } from "../../shared/mod.ts";
 import type {
   Store,
@@ -50,15 +51,13 @@ export class LocalStorageStore implements Store {
 
   // ── Write ────────────────────────────────────────────────────────
 
-  write(entries: StoreEntry[]): Promise<StoreWriteResult[]> {
+  async write(entries: StoreEntry[]): Promise<StoreWriteResult[]> {
     const results: StoreWriteResult[] = [];
 
     for (const entry of entries) {
       try {
-        this.storage.setItem(
-          this.getKey(entry.uri),
-          encodeBase64(entry.payload),
-        );
+        const bytes = await toBytes(entry.payload);
+        this.storage.setItem(this.getKey(entry.uri), encodeBase64(bytes));
         results.push({ success: true });
       } catch (err) {
         results.push({
@@ -68,7 +67,7 @@ export class LocalStorageStore implements Store {
       }
     }
 
-    return Promise.resolve(results);
+    return results;
   }
 
   // ── Read ─────────────────────────────────────────────────────────

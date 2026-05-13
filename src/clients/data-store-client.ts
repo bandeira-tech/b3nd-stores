@@ -41,7 +41,7 @@ import type {
   StatusResult,
 } from "@bandeira-tech/b3nd-core/types";
 import { ObserveEmitter } from "@bandeira-tech/b3nd-core";
-import type { Store } from "../types.ts";
+import type { Store, StorePayload } from "../types.ts";
 
 export class DataStoreClient extends ObserveEmitter
   implements ProtocolInterfaceNode {
@@ -53,14 +53,14 @@ export class DataStoreClient extends ObserveEmitter
   }
 
   async receive(
-    msgs: Message<Uint8Array | null>[],
+    msgs: Message<StorePayload | null>[],
   ): Promise<ReceiveResult[]> {
     const results: ReceiveResult[] = [];
     // Partition into writes and deletes. Most batches are uniform —
     // partitioning preserves Store batching when it is.
     const writeEntries: {
       uri: string;
-      payload: Uint8Array;
+      payload: StorePayload;
       index: number;
     }[] = [];
     const deleteUris: { uri: string; index: number }[] = [];
@@ -113,7 +113,7 @@ export class DataStoreClient extends ObserveEmitter
     return results;
   }
 
-  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]> {
+  read<T = StorePayload>(urls: string[]): Promise<Output<T>[]> {
     return this.store.read<T>(urls);
   }
 

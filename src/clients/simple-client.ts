@@ -35,7 +35,7 @@ import type {
   StatusResult,
 } from "@bandeira-tech/b3nd-core/types";
 import { ObserveEmitter } from "@bandeira-tech/b3nd-core";
-import type { Store } from "../types.ts";
+import type { Store, StorePayload } from "../types.ts";
 
 export class SimpleClient extends ObserveEmitter
   implements ProtocolInterfaceNode {
@@ -46,7 +46,7 @@ export class SimpleClient extends ObserveEmitter
     this.store = store;
   }
 
-  async receive(msgs: Message<Uint8Array>[]): Promise<ReceiveResult[]> {
+  async receive(msgs: Message<StorePayload>[]): Promise<ReceiveResult[]> {
     const entries = msgs.map(([uri, payload]) => ({ uri, payload }));
 
     const writeResults = await this.store.write(entries);
@@ -63,7 +63,7 @@ export class SimpleClient extends ObserveEmitter
     }));
   }
 
-  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]> {
+  read<T = StorePayload>(urls: string[]): Promise<Output<T>[]> {
     return this.store.read<T>(urls);
   }
 
