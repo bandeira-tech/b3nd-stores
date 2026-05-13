@@ -11,7 +11,7 @@
 /// <reference lib="deno.ns" />
 
 import { Client } from "pg";
-import { runSharedStoreSuite } from "../../../_testing/shared-store-suite.ts";
+import { runSharedStoreSuite } from "../../../tests/runners/shared-store-suite.ts";
 import { PostgresStore } from "./store.ts";
 import { generatePostgresSchema } from "./schema.ts";
 import type { SqlExecutor, SqlExecutorResult } from "./mod.ts";

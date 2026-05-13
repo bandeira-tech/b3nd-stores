@@ -6,7 +6,7 @@
 
 /// <reference lib="deno.ns" />
 
-import { runSharedStoreSuite } from "../../../_testing/shared-store-suite.ts";
+import { runSharedStoreSuite } from "../../../tests/runners/shared-store-suite.ts";
 import { S3Store } from "./store.ts";
 import type { S3Executor } from "./mod.ts";
 

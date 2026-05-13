@@ -8,7 +8,7 @@
 /// <reference lib="deno.ns" />
 
 import { type BindValue, Database } from "@db/sqlite";
-import { runSharedStoreSuite } from "../../../_testing/shared-store-suite.ts";
+import { runSharedStoreSuite } from "../../../tests/runners/shared-store-suite.ts";
 import { SqliteStore } from "./store.ts";
 import { generateSqliteSchema } from "./schema.ts";
 import type { SqliteExecutor, SqliteExecutorResult } from "./mod.ts";
