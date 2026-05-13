@@ -1,10 +1,10 @@
 /**
  * PostgreSQL schema utilities for b3nd.
  *
- * Generates DDL for the b3nd storage table. The schema is intentionally
- * minimal: `uri` (PK) + `data` (JSONB) + timestamps. The `values`
- * column that older revisions carried is gone — `StoreEntry` in
- * b3nd-core@0.15 no longer has a `values` field.
+ * Generates DDL for the b3nd storage table. The schema is
+ * intentionally minimal: `uri` (PK) + `payload` (BYTEA) + timestamps.
+ * The store is opaque — `payload` is raw bytes, not JSON; higher
+ * layers own serialization.
  */
 
 /**
@@ -28,10 +28,10 @@ export function generatePostgresSchema(tablePrefix: string): string {
   return `-- PostgreSQL schema for b3nd storage
 -- Table prefix: ${tablePrefix}
 
--- Create ${tablePrefix}_data table for storing URI-based data
+-- Create ${tablePrefix}_data table for storing URI-keyed payloads
 CREATE TABLE IF NOT EXISTS ${tablePrefix}_data (
     uri VARCHAR(2048) PRIMARY KEY,
-    data JSONB NOT NULL,
+    payload BYTEA NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -62,7 +62,7 @@ SELECT
     uri,
     split_part(uri, '://', 1) as program,
     split_part(uri, '://', 2) as path,
-    data,
+    payload,
     created_at,
     updated_at
 FROM ${tablePrefix}_data;
@@ -111,5 +111,5 @@ export function generateCompleteSchemaSQL(options: SchemaInitOptions): string {
  * Placeholder — bump when the table shape changes.
  */
 export function extractSchemaVersion(_sql: string): string {
-  return "v2.0.0";
+  return "v3.0.0";
 }

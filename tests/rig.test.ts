@@ -7,15 +7,20 @@ import type { Program } from "@bandeira-tech/b3nd-core/types";
 import { MemoryStore } from "../src/backends/memory/store.ts";
 import { DataStoreClient } from "../src/clients/data-store-client.ts";
 import { connection } from "@bandeira-tech/b3nd-core/rig";
+import { JsonClient } from "./helpers/json-client.ts";
 
 async function readData<T>(rig: Rig, url: string): Promise<T | null> {
   const r = (await rig.read<T>([url]))[0];
   return r ? r[1] : null;
 }
 
-/** Shorthand: null-aware Store adapter backed by an in-memory store. */
+/**
+ * Shorthand: null-aware Store adapter backed by an in-memory store,
+ * wrapped in JsonClient so tests can pass arbitrary JSON payloads
+ * through the bytes-only Save layer underneath.
+ */
 function memClient() {
-  return new DataStoreClient(new MemoryStore());
+  return new JsonClient(new DataStoreClient(new MemoryStore()));
 }
 
 /**
@@ -1207,11 +1212,12 @@ Deno.test("createStoreFromUrl - creates memory store", async () => {
     backends: [memoryResolver],
   });
 
-  await store.write([
-    { uri: "store://test/key", data: { values: { fire: 10 }, val: 1 } },
-  ]);
+  const payload = new TextEncoder().encode(
+    JSON.stringify({ values: { fire: 10 }, val: 1 }),
+  );
+  await store.write([{ uri: "store://test/key", payload }]);
   const results = await store.read(["store://test/key"]);
-  assertEquals(results[0]?.[1], { values: { fire: 10 }, val: 1 });
+  assertEquals(results[0]?.[1], payload);
 });
 
 // Transport URL schemes (http://, ws://, console://, grpc://) are no
@@ -1296,9 +1302,10 @@ Deno.test("createClientFromUrl - client class in options", async () => {
 Deno.test("createClientFromUrl - defaults to SimpleClient for storage", async () => {
   const { createClientFromUrl } = await import("../src/factory/factory.ts");
 
-  const client = await createClientFromUrl("memory://", {
+  const inner = await createClientFromUrl("memory://", {
     backends: [memoryResolver],
   });
+  const client = new JsonClient(inner);
   const health = await client.status();
   assertEquals(health.status, "healthy");
 
@@ -1347,7 +1354,7 @@ Deno.test("createClientResolver - resolves memory URL with default SimpleClient"
   const { SimpleClient } = await import("../src/clients/simple-client.ts");
 
   const resolveClient = createClientResolver(SimpleClient, [memoryResolver]);
-  const client = await resolveClient("memory://");
+  const client = new JsonClient(await resolveClient("memory://"));
   const health = await client.status();
   assertEquals(health.status, "healthy");
 

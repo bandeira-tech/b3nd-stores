@@ -12,10 +12,10 @@ import type { S3Executor } from "./mod.ts";
 
 /** In-memory S3 executor that simulates S3 bucket operations. */
 function createMockS3Executor(): S3Executor {
-  const objects = new Map<string, string>();
+  const objects = new Map<string, Uint8Array>();
 
   return {
-    putObject: async (key: string, body: string, _contentType: string) => {
+    putObject: async (key: string, body: Uint8Array, _contentType: string) => {
       objects.set(key, body);
     },
 

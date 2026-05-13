@@ -1,28 +1,25 @@
 /**
  * LocalStorageStore — browser localStorage implementation of Store.
  *
- * Pure mechanical storage with no protocol awareness. Uses
- * `localStorage` as a flat key→string KV. Each entry's value is
- * persisted as JSON with `Uint8Array` round-tripped through
- * `_shared/binary.ts`.
+ * Pure mechanical byte storage with no protocol awareness. Uses
+ * `localStorage` as a flat key→string KV. Payload bytes are
+ * base64-encoded since `localStorage` values are strings.
  */
 
 import type {
   DeleteResult,
   Output,
   StatusResult,
+} from "@bandeira-tech/b3nd-core/types";
+import { decodeBase64, encodeBase64 } from "@bandeira-tech/b3nd-core";
+import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
+import { applyReadParams, dispatchRead } from "../../shared/mod.ts";
+import type {
   Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
-} from "@bandeira-tech/b3nd-core/types";
-import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
-import {
-  applyReadParams,
-  decodeBinaryFromJson,
-  dispatchRead,
-  encodeBinaryForJson,
-} from "../../shared/mod.ts";
+} from "../../types.ts";
 
 const STORE_NAME = "LocalStorageStore";
 
@@ -56,7 +53,7 @@ export class LocalStorageStore implements Store {
       try {
         this.storage.setItem(
           this.getKey(entry.uri),
-          JSON.stringify(encodeBinaryForJson(entry.data)),
+          encodeBase64(entry.payload),
         );
         results.push({ success: true });
       } catch (err) {
@@ -72,7 +69,7 @@ export class LocalStorageStore implements Store {
 
   // ── Read ─────────────────────────────────────────────────────────
 
-  read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
+  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]> {
     return dispatchRead<T>(urls, STORE_NAME, {
       read: (p) => this._readOne(p.uri),
       ls: (p) => this._ls(p),
@@ -80,14 +77,14 @@ export class LocalStorageStore implements Store {
     });
   }
 
-  private _readOne(uri: string): unknown {
+  private _readOne(uri: string): Uint8Array | undefined {
     const serialized = this.storage.getItem(this.getKey(uri));
     if (serialized === null) return undefined;
-    return decodeBinaryFromJson(JSON.parse(serialized));
+    return decodeBase64(serialized);
   }
 
   /**
-   * Walk localStorage once, returning `[uri, payload]` for every entry
+   * Walk localStorage once, returning `[uri, bytes]` for every entry
    * whose URI is `prefix + <segment>` with no further `/`. Subtree-only
    * paths are excluded by the slash check.
    */
@@ -162,6 +159,6 @@ export class LocalStorageStore implements Store {
   }
 
   capabilities(): StoreCapabilities {
-    return { atomicBatch: false, binaryData: false };
+    return { atomicBatch: false };
   }
 }

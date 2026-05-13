@@ -1,6 +1,6 @@
 /**
  * PostgresStore unit tests — runs the shared suite against an
- * in-memory mock executor that simulates Postgres JSONB behavior.
+ * in-memory mock executor that simulates Postgres BYTEA behavior.
  */
 
 /// <reference lib="deno.ns" />
@@ -11,11 +11,11 @@ import type { SqlExecutor, SqlExecutorResult } from "./mod.ts";
 
 /**
  * In-memory SQL executor that simulates the subset of Postgres
- * behavior `PostgresStore` relies on. JSON columns round-trip as
- * parsed objects (mimicking JSONB).
+ * behavior `PostgresStore` relies on. BYTEA columns round-trip as
+ * Uint8Array.
  */
 function createMockSqlExecutor(): SqlExecutor {
-  const data = new Map<string, { uri: string; data: string }>();
+  const data = new Map<string, { uri: string; payload: Uint8Array }>();
 
   const executor: SqlExecutor = {
     query: (
@@ -33,11 +33,11 @@ function createMockSqlExecutor(): SqlExecutor {
         return Promise.resolve({ rows: [{ "?column?": 1 }] });
       }
 
-      // Upsert: INSERT INTO X (uri, data) VALUES ($1, $2::jsonb) ON CONFLICT ...
+      // Upsert: INSERT INTO X (uri, payload) VALUES ($1, $2) ON CONFLICT ...
       if (upper.startsWith("INSERT")) {
         const uri = args![0] as string;
-        const dataJson = args![1] as string;
-        data.set(uri, { uri, data: dataJson });
+        const payload = args![1] as Uint8Array;
+        data.set(uri, { uri, payload });
         return Promise.resolve({ rows: [], rowCount: 1 });
       }
 
@@ -50,7 +50,7 @@ function createMockSqlExecutor(): SqlExecutor {
         return Promise.resolve({ rows: [{ n }] });
       }
 
-      // ls: SELECT [uri | uri, data] FROM X WHERE uri LIKE $1 || '%' AND uri NOT LIKE $1 || '%/%' [ORDER BY uri [DESC]] [LIMIT $n OFFSET $m]
+      // ls: SELECT [uri | uri, payload] FROM X WHERE uri LIKE $1 || '%' AND uri NOT LIKE $1 || '%/%' [ORDER BY uri [DESC]] [LIMIT $n OFFSET $m]
       if (upper.includes("LIKE") && upper.includes("NOT LIKE")) {
         const prefix = args![0] as string;
         let rows = [...data.values()].filter((r) =>
@@ -71,24 +71,20 @@ function createMockSqlExecutor(): SqlExecutor {
           rows = rows.slice(offset, offset + limit);
         }
 
-        const selectsData = /SELECT\s+URI\s*,\s*DATA/.test(upper);
+        const selectsPayload = /SELECT\s+URI\s*,\s*PAYLOAD/.test(upper);
         return Promise.resolve({
           rows: rows.map((r) =>
-            selectsData
-              ? { uri: r.uri, data: JSON.parse(r.data) }
-              : { uri: r.uri }
+            selectsPayload ? { uri: r.uri, payload: r.payload } : { uri: r.uri }
           ),
         });
       }
 
-      // Point read: SELECT data FROM X WHERE uri = $1
+      // Point read: SELECT payload FROM X WHERE uri = $1
       if (upper.startsWith("SELECT") && upper.includes("WHERE URI = $1")) {
         const uri = args![0] as string;
         const row = data.get(uri);
         if (!row) return Promise.resolve({ rows: [] });
-        return Promise.resolve({
-          rows: [{ data: JSON.parse(row.data) }],
-        });
+        return Promise.resolve({ rows: [{ payload: row.payload }] });
       }
 
       // Delete

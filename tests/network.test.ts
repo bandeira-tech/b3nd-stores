@@ -20,9 +20,10 @@ import type {
 } from "@bandeira-tech/b3nd-core/types";
 import { network, peer } from "@bandeira-tech/b3nd-core/network";
 import type { Policy } from "@bandeira-tech/b3nd-core/network";
+import { JsonClient } from "./helpers/json-client.ts";
 
-function mem(): SimpleClient {
-  return new SimpleClient(new MemoryStore());
+function mem(): ProtocolInterfaceNode {
+  return new JsonClient(new SimpleClient(new MemoryStore()));
 }
 
 /**

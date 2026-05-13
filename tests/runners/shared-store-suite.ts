@@ -1,15 +1,16 @@
 /**
  * Shared Test Suite for Store Interface
  *
- * Validates every Store implementation against the b3nd-core@0.15
- * contract:
- * - write(entries: { uri, data }[]) → StoreWriteResult[]
- * - read(urls)                       → Output<T>[]   (tuple [uri, payload])
- * - delete(uris)                     → DeleteResult[]
- * - status()                         → StatusResult  (advertises `fns`)
- * - capabilities()                   → StoreCapabilities (optional)
+ * Validates every Store implementation against the b3nd-save
+ * bytes-only contract:
+ * - write(entries: { uri, payload: Uint8Array }[]) → StoreWriteResult[]
+ * - read(urls)                                     → Output<T>[]
+ * - delete(uris)                                   → DeleteResult[]
+ * - status()                                       → StatusResult  (advertises `fns`)
+ * - capabilities()                                 → StoreCapabilities (optional)
  *
- * Conventions enforced here (see project memory `core_upgrade`):
+ * Conventions enforced here:
+ * - `payload` is **always** `Uint8Array` — Stores never inspect content.
  * - `fn=read` miss → payload is `undefined`.
  * - `fn=ls` is SHALLOW: direct leaves only (entries whose uri is
  *   `prefix + <segment>` with no further `/`). Subtree-only entries
@@ -25,7 +26,10 @@
 /// <reference lib="deno.ns" />
 
 import { assertEquals, assertRejects } from "jsr:@std/assert";
-import type { Output, Store } from "@bandeira-tech/b3nd-core/types";
+import type { Output } from "@bandeira-tech/b3nd-core/types";
+import type { Store } from "../../src/types.ts";
+
+const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
 
 export interface StoreTestConfig {
   /** Factory that returns a fresh Store for each test. */
@@ -41,12 +45,27 @@ export interface StoreTestConfig {
   supportsCount?: boolean;
 }
 
-function payloadOf<T>(out: Output<T>): T {
+function payloadOf(out: Output<unknown>): unknown {
   return out[1];
 }
 
 function uriOf(out: Output): string {
   return out[0];
+}
+
+function assertBytesEqual(
+  actual: unknown,
+  expected: Uint8Array,
+  msg?: string,
+): void {
+  if (!(actual instanceof Uint8Array)) {
+    throw new Error(
+      `${msg ?? "expected Uint8Array"}, got ${
+        actual === null ? "null" : typeof actual
+      }`,
+    );
+  }
+  assertEquals(Array.from(actual), Array.from(expected), msg);
 }
 
 export function runSharedStoreSuite(
@@ -66,7 +85,7 @@ export function runSharedStoreSuite(
   t("write single entry", async () => {
     const store = await Promise.resolve(config.create());
     const results = await store.write([
-      { uri: "store://app/config", data: { theme: "dark" } },
+      { uri: "store://app/config", payload: enc("dark") },
     ]);
     assertEquals(results.length, 1);
     assertEquals(results[0].success, true);
@@ -75,9 +94,9 @@ export function runSharedStoreSuite(
   t("write batch of entries", async () => {
     const store = await Promise.resolve(config.create());
     const results = await store.write([
-      { uri: "store://app/a", data: "A" },
-      { uri: "store://app/b", data: "B" },
-      { uri: "store://app/c", data: "C" },
+      { uri: "store://app/a", payload: enc("A") },
+      { uri: "store://app/b", payload: enc("B") },
+      { uri: "store://app/c", payload: enc("C") },
     ]);
     assertEquals(results.length, 3);
     assertEquals(results.every((r) => r.success), true);
@@ -96,59 +115,68 @@ export function runSharedStoreSuite(
 
   // ── Read: point reads ─────────────────────────────────────────────
 
-  t("write and read back returns tuple [uri, payload]", async () => {
+  t("write and read back returns tuple [uri, bytes]", async () => {
     const store = await Promise.resolve(config.create());
     await store.write([
-      { uri: "store://app/config", data: { theme: "dark" } },
+      { uri: "store://app/config", payload: enc("dark") },
     ]);
     const results = await store.read(["store://app/config"]);
     assertEquals(results.length, 1);
     assertEquals(uriOf(results[0]), "store://app/config");
-    assertEquals(payloadOf(results[0]), { theme: "dark" });
+    assertBytesEqual(payloadOf(results[0]), enc("dark"));
   });
 
   t("batch read returns one Output per input url, in order", async () => {
     const store = await Promise.resolve(config.create());
     await store.write([
-      { uri: "store://app/a", data: "A" },
-      { uri: "store://app/b", data: "B" },
-      { uri: "store://app/c", data: "C" },
+      { uri: "store://app/a", payload: enc("A") },
+      { uri: "store://app/b", payload: enc("B") },
+      { uri: "store://app/c", payload: enc("C") },
     ]);
     const urls = ["store://app/a", "store://app/b", "store://app/c"];
     const results = await store.read(urls);
     assertEquals(results.length, 3);
     assertEquals(results.map(uriOf), urls);
-    assertEquals(results.map(payloadOf), ["A", "B", "C"]);
+    assertBytesEqual(payloadOf(results[0]), enc("A"));
+    assertBytesEqual(payloadOf(results[1]), enc("B"));
+    assertBytesEqual(payloadOf(results[2]), enc("C"));
   });
 
   t("write overwrites existing value", async () => {
     const store = await Promise.resolve(config.create());
-    await store.write([{ uri: "store://app/x", data: "old" }]);
-    await store.write([{ uri: "store://app/x", data: "new" }]);
+    await store.write([{ uri: "store://app/x", payload: enc("old") }]);
+    await store.write([{ uri: "store://app/x", payload: enc("new") }]);
     const results = await store.read(["store://app/x"]);
-    assertEquals(payloadOf(results[0]), "new");
+    assertBytesEqual(payloadOf(results[0]), enc("new"));
   });
 
-  // ── Scalar data types ─────────────────────────────────────────────
+  // ── Binary payload shapes ─────────────────────────────────────────
 
-  for (
-    const [name, value] of [
-      ["string", "hello world"],
-      ["number", 42],
-      ["boolean", true],
-      ["null", null],
-      ["empty string", ""],
-      ["zero", 0],
-    ] as const
-  ) {
-    t(`read/write ${name} data`, async () => {
-      const store = await Promise.resolve(config.create());
-      const uri = `store://scalar/${name.replace(/\s+/g, "_")}`;
-      await store.write([{ uri, data: value }]);
-      const results = await store.read([uri]);
-      assertEquals(payloadOf(results[0]), value);
-    });
-  }
+  t("read/write empty payload", async () => {
+    const store = await Promise.resolve(config.create());
+    await store.write([
+      { uri: "store://bytes/empty", payload: new Uint8Array(0) },
+    ]);
+    const results = await store.read(["store://bytes/empty"]);
+    assertBytesEqual(payloadOf(results[0]), new Uint8Array(0));
+  });
+
+  t("read/write payload covering all byte values", async () => {
+    const store = await Promise.resolve(config.create());
+    const all = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) all[i] = i;
+    await store.write([{ uri: "store://bytes/all", payload: all }]);
+    const results = await store.read(["store://bytes/all"]);
+    assertBytesEqual(payloadOf(results[0]), all);
+  });
+
+  t("read/write large payload (32 KB random bytes)", async () => {
+    const store = await Promise.resolve(config.create());
+    const big = crypto.getRandomValues(new Uint8Array(32 * 1024));
+    await store.write([{ uri: "store://bytes/big", payload: big }]);
+    const results = await store.read(["store://bytes/big"]);
+    assertBytesEqual(payloadOf(results[0]), big);
+  });
 
   // ── Miss convention: payload === undefined ────────────────────────
 
@@ -163,13 +191,13 @@ export function runSharedStoreSuite(
   t("read with partial misses keeps positional order", async () => {
     const store = await Promise.resolve(config.create());
     await store.write([
-      { uri: "store://app/exists", data: { ok: true } },
+      { uri: "store://app/exists", payload: enc("yes") },
     ]);
     const urls = ["store://app/exists", "store://app/missing"];
     const results = await store.read(urls);
     assertEquals(results.length, 2);
     assertEquals(uriOf(results[0]), "store://app/exists");
-    assertEquals(payloadOf(results[0]), { ok: true });
+    assertBytesEqual(payloadOf(results[0]), enc("yes"));
     assertEquals(uriOf(results[1]), "store://app/missing");
     assertEquals(payloadOf(results[1]), undefined);
   });
@@ -178,11 +206,11 @@ export function runSharedStoreSuite(
 
   t("read echoes input url verbatim (with query string)", async () => {
     const store = await Promise.resolve(config.create());
-    await store.write([{ uri: "store://app/x", data: 1 }]);
+    await store.write([{ uri: "store://app/x", payload: enc("v") }]);
     const url = "store://app/x?fn=read";
     const results = await store.read([url]);
     assertEquals(uriOf(results[0]), url);
-    assertEquals(payloadOf(results[0]), 1);
+    assertBytesEqual(payloadOf(results[0]), enc("v"));
   });
 
   // ── ls (trailing slash / fn=ls) ───────────────────────────────────
@@ -191,8 +219,8 @@ export function runSharedStoreSuite(
     t("trailing-slash defaults to fn=ls (returns Output[])", async () => {
       const store = await Promise.resolve(config.create());
       await store.write([
-        { uri: "store://users/alice", data: { name: "Alice" } },
-        { uri: "store://users/bob", data: { name: "Bob" } },
+        { uri: "store://users/alice", payload: enc("Alice") },
+        { uri: "store://users/bob", payload: enc("Bob") },
       ]);
       const results = await store.read(["store://users/"]);
       assertEquals(results.length, 1);
@@ -205,8 +233,8 @@ export function runSharedStoreSuite(
     t("ls is shallow — nested entries are absent", async () => {
       const store = await Promise.resolve(config.create());
       await store.write([
-        { uri: "store://users/alice", data: "alice-leaf" },
-        { uri: "store://users/bob/posts/1", data: "deep" },
+        { uri: "store://users/alice", payload: enc("alice-leaf") },
+        { uri: "store://users/bob/posts/1", payload: enc("deep") },
       ]);
       const results = await store.read(["store://users/"]);
       const children = payloadOf(results[0]) as Output[];
@@ -217,8 +245,8 @@ export function runSharedStoreSuite(
     t("ls with format=uris returns string[]", async () => {
       const store = await Promise.resolve(config.create());
       await store.write([
-        { uri: "store://t/a", data: 1 },
-        { uri: "store://t/b", data: 2 },
+        { uri: "store://t/a", payload: enc("1") },
+        { uri: "store://t/b", payload: enc("2") },
       ]);
       const results = await store.read([
         "store://t/?fn=ls&format=uris&sortBy=uri",
@@ -230,9 +258,9 @@ export function runSharedStoreSuite(
     t("ls supports sortBy=uri (asc/desc)", async () => {
       const store = await Promise.resolve(config.create());
       await store.write([
-        { uri: "store://s/c", data: 3 },
-        { uri: "store://s/a", data: 1 },
-        { uri: "store://s/b", data: 2 },
+        { uri: "store://s/c", payload: enc("3") },
+        { uri: "store://s/a", payload: enc("1") },
+        { uri: "store://s/b", payload: enc("2") },
       ]);
       const asc = await store.read([
         "store://s/?fn=ls&sortBy=uri&format=uris",
@@ -255,10 +283,10 @@ export function runSharedStoreSuite(
     t("ls supports limit + page", async () => {
       const store = await Promise.resolve(config.create());
       await store.write([
-        { uri: "store://p/a", data: 1 },
-        { uri: "store://p/b", data: 2 },
-        { uri: "store://p/c", data: 3 },
-        { uri: "store://p/d", data: 4 },
+        { uri: "store://p/a", payload: enc("1") },
+        { uri: "store://p/b", payload: enc("2") },
+        { uri: "store://p/c", payload: enc("3") },
+        { uri: "store://p/d", payload: enc("4") },
       ]);
       const p1 = await store.read([
         "store://p/?fn=ls&sortBy=uri&limit=2&page=1&format=uris",
@@ -286,7 +314,7 @@ export function runSharedStoreSuite(
     t("ls throws on unsupported sortBy", async () => {
       const store = await Promise.resolve(config.create());
       await assertRejects(
-        () => store.read(["store://t/?fn=ls&sortBy=data"]),
+        () => store.read(["store://t/?fn=ls&sortBy=payload"]),
         Error,
       );
     });
@@ -317,9 +345,9 @@ export function runSharedStoreSuite(
     t("fn=count returns number of direct leaves", async () => {
       const store = await Promise.resolve(config.create());
       await store.write([
-        { uri: "store://c/a", data: 1 },
-        { uri: "store://c/b", data: 2 },
-        { uri: "store://c/deep/x", data: 9 },
+        { uri: "store://c/a", payload: enc("1") },
+        { uri: "store://c/b", payload: enc("2") },
+        { uri: "store://c/deep/x", payload: enc("9") },
       ]);
       const results = await store.read(["store://c/?fn=count"]);
       assertEquals(payloadOf(results[0]), 2);
@@ -346,7 +374,7 @@ export function runSharedStoreSuite(
 
   t("delete returns success", async () => {
     const store = await Promise.resolve(config.create());
-    await store.write([{ uri: "store://app/x", data: "hello" }]);
+    await store.write([{ uri: "store://app/x", payload: enc("hello") }]);
     const results = await store.delete(["store://app/x"]);
     assertEquals(results.length, 1);
     assertEquals(results[0].success, true);
@@ -354,7 +382,7 @@ export function runSharedStoreSuite(
 
   t("delete removes entry (read miss after delete)", async () => {
     const store = await Promise.resolve(config.create());
-    await store.write([{ uri: "store://app/x", data: "hello" }]);
+    await store.write([{ uri: "store://app/x", payload: enc("hello") }]);
     await store.delete(["store://app/x"]);
     const results = await store.read(["store://app/x"]);
     assertEquals(payloadOf(results[0]), undefined);
@@ -370,9 +398,9 @@ export function runSharedStoreSuite(
   t("batch delete", async () => {
     const store = await Promise.resolve(config.create());
     await store.write([
-      { uri: "store://app/a", data: "A" },
-      { uri: "store://app/b", data: "B" },
-      { uri: "store://app/c", data: "C" },
+      { uri: "store://app/a", payload: enc("A") },
+      { uri: "store://app/b", payload: enc("B") },
+      { uri: "store://app/c", payload: enc("C") },
     ]);
     await store.delete(["store://app/a", "store://app/c"]);
     const results = await store.read([
@@ -381,7 +409,7 @@ export function runSharedStoreSuite(
       "store://app/c",
     ]);
     assertEquals(payloadOf(results[0]), undefined);
-    assertEquals(payloadOf(results[1]), "B");
+    assertBytesEqual(payloadOf(results[1]), enc("B"));
     assertEquals(payloadOf(results[2]), undefined);
   });
 
@@ -406,9 +434,6 @@ export function runSharedStoreSuite(
       const caps = store.capabilities();
       if (caps.atomicBatch !== undefined) {
         assertEquals(typeof caps.atomicBatch, "boolean");
-      }
-      if (caps.binaryData !== undefined) {
-        assertEquals(typeof caps.binaryData, "boolean");
       }
     }
   });

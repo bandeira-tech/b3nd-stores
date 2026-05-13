@@ -2,28 +2,31 @@
  * DataStoreClient — null-aware ProtocolInterfaceNode over a Store.
  *
  * Wraps any `Store` and translates the wire convention into Store
- * calls. Knows nothing about envelopes, signatures, or any protocol
- * payload shape — its only job is the deletion-as-data convention:
+ * calls. Knows nothing about envelopes, signatures, or protocol
+ * payload shapes — its only job is the deletion-as-data convention:
  *
- *   `[uri, null]`   → store.delete([uri])
- *   `[uri, data]`   → store.write([{ uri, data }])
+ *   `[uri, null]`    → store.delete([uri])
+ *   `[uri, bytes]`   → store.write([{ uri, payload: bytes }])
  *
- * For everything else (envelope decomposition, fan-out, conserved
- * quantities), install programs and handlers on the Rig.
+ * The Store is byte-only — message payloads must be `Uint8Array` or
+ * `null` (to signal delete). Higher layers own serialization.
  *
  * Observe is implemented at the client layer via `ObserveEmitter`:
- * each successful write emits `(uri, data)`; each successful delete
+ * each successful write emits `(uri, bytes)`; each successful delete
  * emits `(uri, null)`.
  *
  * @example
  * ```typescript
- * import { DataStoreClient, MemoryStore } from "@bandeira-tech/b3nd-sdk";
+ * import { DataStoreClient } from "@bandeira-tech/b3nd-save/clients";
+ * import { MemoryStore } from "@bandeira-tech/b3nd-save/memory";
  *
  * const store = new MemoryStore();
  * const client = new DataStoreClient(store);
  *
  * // Write
- * await client.receive([["mutable://app/config", { theme: "dark" }]]);
+ * await client.receive([
+ *   ["mutable://app/config", new TextEncoder().encode("dark")],
+ * ]);
  *
  * // Delete (null payload is the convention)
  * await client.receive([["mutable://app/config", null]]);
@@ -36,9 +39,9 @@ import type {
   ProtocolInterfaceNode,
   ReceiveResult,
   StatusResult,
-  Store,
 } from "@bandeira-tech/b3nd-core/types";
 import { ObserveEmitter } from "@bandeira-tech/b3nd-core";
+import type { Store } from "../types.ts";
 
 export class DataStoreClient extends ObserveEmitter
   implements ProtocolInterfaceNode {
@@ -49,11 +52,17 @@ export class DataStoreClient extends ObserveEmitter
     this.store = store;
   }
 
-  async receive(msgs: Message[]): Promise<ReceiveResult[]> {
+  async receive(
+    msgs: Message<Uint8Array | null>[],
+  ): Promise<ReceiveResult[]> {
     const results: ReceiveResult[] = [];
     // Partition into writes and deletes. Most batches are uniform —
     // partitioning preserves Store batching when it is.
-    const writeEntries: { uri: string; data: unknown; index: number }[] = [];
+    const writeEntries: {
+      uri: string;
+      payload: Uint8Array;
+      index: number;
+    }[] = [];
     const deleteUris: { uri: string; index: number }[] = [];
     for (let i = 0; i < msgs.length; i++) {
       const [uri, payload] = msgs[i];
@@ -64,7 +73,7 @@ export class DataStoreClient extends ObserveEmitter
       if (payload === null) {
         deleteUris.push({ uri, index: i });
       } else {
-        writeEntries.push({ uri, data: payload, index: i });
+        writeEntries.push({ uri, payload, index: i });
       }
     }
 
@@ -77,13 +86,13 @@ export class DataStoreClient extends ObserveEmitter
 
     if (writeEntries.length > 0) {
       const writeResults = await this.store.write(
-        writeEntries.map((e) => ({ uri: e.uri, data: e.data })),
+        writeEntries.map((e) => ({ uri: e.uri, payload: e.payload })),
       );
       for (let j = 0; j < writeResults.length; j++) {
         const e = writeEntries[j];
         const r = writeResults[j];
         results[e.index] = { accepted: r.success, error: r.error };
-        if (r.success) this._emit(e.uri, e.data);
+        if (r.success) this._emit(e.uri, e.payload);
       }
     }
 
@@ -104,7 +113,7 @@ export class DataStoreClient extends ObserveEmitter
     return results;
   }
 
-  read<T = unknown>(urls: string[]): Promise<Output<T>[]> {
+  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]> {
     return this.store.read<T>(urls);
   }
 
