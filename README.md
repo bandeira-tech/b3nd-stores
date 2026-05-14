@@ -12,17 +12,25 @@ The **data-saving layer** for B3nd — everything between a node's
   re-deriving the contract details.
 
 ```ts
+type StorePayload = Uint8Array | ReadableStream<Uint8Array>;
+
+interface StoreEntry {
+  uri: string;
+  payload: StorePayload;
+}
+
 interface Store {
   write(entries: StoreEntry[]): Promise<StoreWriteResult[]>;
-  read<T>(urls: string[]): Promise<Output<T>[]>;
+  read<T = StorePayload>(urls: string[]): Promise<Output<T>[]>;
   delete(uris: string[]): Promise<DeleteResult[]>;
   status(): Promise<StatusResult>;
   capabilities?(): StoreCapabilities;
 }
 ```
 
-`Store` is **mechanical storage** with no protocol awareness — write, read,
-delete by uri. Wrap it with a client from `@bandeira-tech/b3nd-save/clients`
+`Store` is **mechanical byte storage** with no protocol awareness — write, read,
+delete bytes by uri. Higher layers (apps, protocol clients) own serialization.
+Wrap a `Store` with a client from `@bandeira-tech/b3nd-save/clients`
 (`SimpleClient`, `DataStoreClient`) to get a `ProtocolInterfaceNode`.
 
 ## Imports
@@ -43,18 +51,22 @@ const store = new postgres.PostgresStore("myapp", executor);
 
 ## Backends
 
-| Backend       | Import                                   | Executor                               | Push-down                                       |
-| ------------- | ---------------------------------------- | -------------------------------------- | ----------------------------------------------- |
-| Memory        | `@bandeira-tech/b3nd-save/memory`        | none                                   | in-memory tree walk over direct children        |
-| PostgreSQL    | `@bandeira-tech/b3nd-save/postgres`      | inject any `pg`-style executor         | `ls` / `count` via `LIKE … AND NOT LIKE …%/%`   |
-| SQLite        | `@bandeira-tech/b3nd-save/sqlite`        | inject any `@db/sqlite`-style executor | same as Postgres                                |
-| MongoDB       | `@bandeira-tech/b3nd-save/mongo`         | inject a `MongoExecutor`               | regex filter `^<prefix>[^/]+$`                  |
-| Elasticsearch | `@bandeira-tech/b3nd-save/elasticsearch` | inject an `ElasticsearchExecutor`      | `regexp` query + `_count` endpoint              |
-| S3            | `@bandeira-tech/b3nd-save/s3`            | inject an `S3Executor`                 | `listObjects(prefix)` + client-side leaf filter |
-| Filesystem    | `@bandeira-tech/b3nd-save/fs`            | inject an `FsExecutor`                 | direct-child file listing                       |
-| IPFS          | `@bandeira-tech/b3nd-save/ipfs`          | inject an `IpfsExecutor`               | in-memory `uri → CID` index                     |
-| LocalStorage  | `@bandeira-tech/b3nd-save/localstorage`  | injects browser `Storage`              | flat key scan                                   |
-| IndexedDB     | `@bandeira-tech/b3nd-save/indexeddb`     | injects `indexedDB` / `IDBKeyRange`    | bounded cursor with early termination           |
+| Backend       | Import                                   | Executor                               | Push-down                                       | Streams? |
+| ------------- | ---------------------------------------- | -------------------------------------- | ----------------------------------------------- | -------- |
+| Memory        | `@bandeira-tech/b3nd-save/memory`        | none                                   | in-memory tree walk over direct children        | no       |
+| PostgreSQL    | `@bandeira-tech/b3nd-save/postgres`      | inject any `pg`-style executor         | `ls` / `count` via `LIKE … AND NOT LIKE …%/%`   | no       |
+| SQLite        | `@bandeira-tech/b3nd-save/sqlite`        | inject any `@db/sqlite`-style executor | same as Postgres                                | no       |
+| MongoDB       | `@bandeira-tech/b3nd-save/mongo`         | inject a `MongoExecutor`               | regex filter `^<prefix>[^/]+$`                  | no       |
+| Elasticsearch | `@bandeira-tech/b3nd-save/elasticsearch` | inject an `ElasticsearchExecutor`      | `regexp` query + `_count` endpoint              | no       |
+| S3            | `@bandeira-tech/b3nd-save/s3`            | inject an `S3Executor`                 | `listObjects(prefix)` + client-side leaf filter | yes      |
+| Filesystem    | `@bandeira-tech/b3nd-save/fs`            | inject an `FsExecutor`                 | direct-child file listing                       | yes      |
+| IPFS          | `@bandeira-tech/b3nd-save/ipfs`          | inject an `IpfsExecutor`               | in-memory `uri → CID` index                     | yes      |
+| LocalStorage  | `@bandeira-tech/b3nd-save/localstorage`  | injects browser `Storage`              | flat key scan                                   | no       |
+| IndexedDB     | `@bandeira-tech/b3nd-save/indexeddb`     | injects `indexedDB` / `IDBKeyRange`    | bounded cursor with early termination           | no       |
+
+"Streams?" = whether `read` returns a `ReadableStream<Uint8Array>` directly (no
+buffering) on this backend. Buffered backends collect any streamed write input
+to bytes before storing and always return `Uint8Array` on read.
 
 ## Clients and factory
 
@@ -66,9 +78,11 @@ const store = new postgres.PostgresStore("myapp", executor);
   schemes to Stores or clients. **No protocols are built-in** — every backend
   (memory included) plugs in via `BackendResolver[]`. The factory resolves only
   what you register.
-- **`@bandeira-tech/b3nd-save/shared`** — helpers for backend authors: binary
-  encode/decode, read-param validation, read-dispatch. Use these when
-  implementing a new `Store` so it matches the contract the built-ins follow.
+- **`@bandeira-tech/b3nd-save/shared`** — helpers for backend authors:
+  `dispatchRead`, `validateReadParams`, `applyReadParams`, `storageFailure`
+  (catch-block helper that builds a structured `B3ndError`), and `toBytes` /
+  `toStream` payload normalizers. Use these when implementing a new `Store` so
+  it matches the contract the built-ins follow.
 
 ## Quick start (Postgres)
 
@@ -78,21 +92,30 @@ import {
   PostgresStore,
 } from "jsr:@bandeira-tech/b3nd-save/postgres";
 
+const enc = (s: string) => new TextEncoder().encode(s);
+const dec = (b: Uint8Array) => new TextDecoder().decode(b);
+
 // 1. Initialise the schema (one-time)
 await myDb.query(generatePostgresSchema("myapp"));
 
 // 2. Build a Store
 const store = new PostgresStore("myapp", myExecutor);
 
-// 3. Write
+// 3. Write — payloads are bytes. Encode whatever shape your app needs.
 await store.write([
-  { uri: "mutable://users/alice", data: { name: "Alice" } },
-  { uri: "mutable://users/bob", data: { name: "Bob" } },
+  {
+    uri: "mutable://users/alice",
+    payload: enc(JSON.stringify({ name: "Alice" })),
+  },
+  { uri: "mutable://users/bob", payload: enc(JSON.stringify({ name: "Bob" })) },
 ]);
 
 // 4. Read — point read
 const [[uri, alice]] = await store.read(["mutable://users/alice"]);
 //                                       ^ tuple [uri, payload]
+//                                         payload: Uint8Array on buffered backends,
+//                                         ReadableStream<Uint8Array> on fs/s3/ipfs.
+console.log(dec(alice as Uint8Array));
 
 // 5. Read — list direct children
 const [[, children]] = await store.read(["mutable://users/"]);
@@ -104,6 +127,28 @@ const [[, uris]] = await store.read(["mutable://users/?fn=ls&format=uris"]);
 ```
 
 The same shape works for every backend — only the constructor differs.
+
+### Streaming large payloads
+
+`StoreEntry.payload` accepts either bytes or a `ReadableStream<Uint8Array>`
+(same union as `fetch` `BodyInit`). Backends that have native streaming (fs / s3
+/ ipfs) keep streams end-to-end on both write and read; other backends collect
+to bytes.
+
+```ts
+// Stream-in: pipe a fetch response into a Store without buffering
+const res = await fetch("https://example.com/big.bin");
+await store.write([{ uri: "hash://big", payload: res.body! }]);
+
+// Stream-out on a streamer backend (fs, s3, ipfs)
+const [[, payload]] = await fsStore.read(["hash://big"]);
+// payload is ReadableStream<Uint8Array> on fs — pipe it somewhere
+await (payload as ReadableStream<Uint8Array>).pipeTo(somewhere);
+
+// Or collect on demand
+import { toBytes } from "@bandeira-tech/b3nd-save/shared";
+const bytes = await toBytes(payload as Uint8Array | ReadableStream<Uint8Array>);
+```
 
 ## Reading contract
 
@@ -132,6 +177,10 @@ Throws on `pattern`, `cursor`, unknown `sortBy`, and unknown `format`.
 
 ### Locked semantics
 
+- **Bytes-only payloads.** The Store does not parse, serialize, or otherwise
+  inspect content. `payload` is `Uint8Array | ReadableStream<Uint8Array>` in;
+  the same shape comes back out. Higher layers do JSON / encryption / signing /
+  etc. on top.
 - **Miss is `payload === undefined`.** A point read for an absent uri returns
   `[inputUrl, undefined]`. Misses are _content_, not errors.
 - **`ls` and `count` are shallow direct-leaves only.** An entry is _in_
@@ -143,15 +192,24 @@ Throws on `pattern`, `cursor`, unknown `sortBy`, and unknown `format`.
   `SELECT uri`; Mongo uses a projection; Elasticsearch passes `_source: false`).
 - **Unsupported params throw.** Misses are payload, but bad params are
   programmer errors.
+- **Atomic batches when advertised.** Backends that declare
+  `capabilities.atomicBatch: true` (Postgres, SQLite) wrap the batch in a
+  transaction — every entry commits together or none do. On failure every result
+  carries the same root-cause error.
+- **Structured errors.** Write and delete failures carry an
+  `errorDetail?:
+  B3ndError` with `code: "STORAGE_ERROR"` and (when
+  entry-attributable) the failing `uri`. The `error: string` field is kept for
+  human-readable logs.
 
 ## Testing
 
-- `deno task test` — runs every store's unit suite (32 tests each) against an
-  in-memory mock, plus the client and factory tests and the `_integration/`
-  framework+memory integration suite.
+- `deno task test` — runs every store's unit suite against an in-memory mock,
+  plus the client and factory tests and the cross-cutting integration suite
+  under `tests/`.
 - `deno task test:integration:{postgres,mongo,sqlite,fs,ipfs,s3,elasticsearch}`
-  — runs the same 32 tests against real backends. Started in CI; locally
-  requires the matching service running on the conventional port.
+  — runs the same suite against real backends. Wired up in CI; locally requires
+  the matching service running on the conventional port.
 - `deno task test:integration:{indexeddb,localstorage}` — runs the suites inside
   a real headless Chromium via Astral + esbuild. Astral downloads its own
   Chromium on first run.
