@@ -128,6 +128,75 @@ const [[, uris]] = await store.read(["mutable://users/?fn=ls&format=uris"]);
 
 The same shape works for every backend — only the constructor differs.
 
+### Structured payloads — same shape, any encoding
+
+The Store never inspects content. Encode on write, decode on read — the
+round-trip is identical regardless of format. Pick whichever fits the data (JSON
+for ad-hoc records, protobuf / FlatBuffers / CBOR / MessagePack for
+schema-backed structured payloads, encrypted blobs for sealed content).
+
+**JSON:**
+
+```ts
+const enc = (s: string) => new TextEncoder().encode(s);
+const dec = (b: Uint8Array) => new TextDecoder().decode(b);
+
+await store.write([
+  {
+    uri: "mutable://users/alice",
+    payload: enc(JSON.stringify({ name: "Alice" })),
+  },
+]);
+
+const [[, payload]] = await store.read(["mutable://users/alice"]);
+const user = JSON.parse(dec(payload as Uint8Array));
+// user.name === "Alice"
+```
+
+**Protobuf** (generated from a `.proto` with `protobuf-es` / `ts-proto` /
+`protoc-gen-es`):
+
+```ts
+import { UserProfile } from "./gen/user_pb.ts";
+
+await store.write([
+  {
+    uri: "mutable://users/alice",
+    payload: new UserProfile({ name: "Alice" }).toBinary(),
+  },
+]);
+
+const [[, payload]] = await store.read(["mutable://users/alice"]);
+const user = UserProfile.fromBinary(payload as Uint8Array);
+// user.name === "Alice"
+```
+
+**FlatBuffers** (generated from a `.fbs` with `flatc`):
+
+```ts
+import * as flatbuffers from "flatbuffers";
+import { UserProfile } from "./gen/user_generated.ts";
+
+const builder = new flatbuffers.Builder(64);
+const name = builder.createString("Alice");
+UserProfile.startUserProfile(builder);
+UserProfile.addName(builder, name);
+builder.finish(UserProfile.endUserProfile(builder));
+
+await store.write([
+  { uri: "mutable://users/alice", payload: builder.asUint8Array() },
+]);
+
+const [[, payload]] = await store.read(["mutable://users/alice"]);
+const user = UserProfile.getRootAsUserProfile(
+  new flatbuffers.ByteBuffer(payload as Uint8Array),
+);
+// user.name() === "Alice"   ← accessor reads from the buffer on demand
+```
+
+Only the encode/decode line changes. The Store, the client, the wire shape, and
+the read contract stay the same.
+
 ### Streaming large payloads
 
 `StoreEntry.payload` accepts either bytes or a `ReadableStream<Uint8Array>`
