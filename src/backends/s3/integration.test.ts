@@ -45,7 +45,7 @@ function createS3Executor(): S3Executor {
       const res = await fetch(url(key), {
         method: "PUT",
         headers: { "Content-Type": contentType },
-        body: bytes,
+        body: bytes as BodyInit,
       });
       if (!res.ok) {
         const text = await res.text();
