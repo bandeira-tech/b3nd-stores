@@ -166,28 +166,45 @@ export class IndexedDBStore implements Store {
   async write(entries: StoreEntry[]): Promise<StoreWriteResult[]> {
     const results: StoreWriteResult[] = [];
 
+    // Collect any streams to bytes BEFORE opening the IDB transaction.
+    // An IDB transaction stays alive only across IDB-callback
+    // microtasks; awaiting a non-IDB promise (like draining a
+    // ReadableStream) yields long enough for the transaction to
+    // auto-commit, after which subsequent put()s either throw
+    // `TransactionInactiveError` or silently no-op depending on the
+    // implementation. fake-indexeddb is permissive about this; real
+    // Chromium is not.
+    let prepared: StoredRecord[];
+    try {
+      prepared = await Promise.all(
+        entries.map(async (e): Promise<StoredRecord> => ({
+          uri: e.uri,
+          payload: await toBytes(e.payload),
+        })),
+      );
+    } catch (err) {
+      const failure = storageFailure(err, "Write failed");
+      return entries.map(() => ({ success: false, ...failure }));
+    }
+
     try {
       const store = await this.getStore("readwrite");
 
-      for (const entry of entries) {
+      for (const record of prepared) {
         try {
-          const record: StoredRecord = {
-            uri: entry.uri,
-            payload: await toBytes(entry.payload),
-          };
           await new Promise<void>((resolve, reject) => {
             const request = store.put(record);
             request.onsuccess = () => resolve();
             request.onerror = () =>
               reject(
-                new Error(`Failed to write ${entry.uri}: ${request.error}`),
+                new Error(`Failed to write ${record.uri}: ${request.error}`),
               );
           });
           results.push({ success: true });
         } catch (err) {
           results.push({
             success: false,
-            ...storageFailure(err, "Write failed", entry.uri),
+            ...storageFailure(err, "Write failed", record.uri),
           });
         }
       }
