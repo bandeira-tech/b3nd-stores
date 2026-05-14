@@ -131,8 +131,8 @@ The same shape works for every backend — only the constructor differs.
 ### Structured payloads — same shape, any encoding
 
 The Store never inspects content. Encode on write, decode on read — the
-round-trip is identical regardless of format. Pick whichever fits the data
-(JSON for ad-hoc records, protobuf / FlatBuffers / CBOR / MessagePack for
+round-trip is identical regardless of format. Pick whichever fits the data (JSON
+for ad-hoc records, protobuf / FlatBuffers / CBOR / MessagePack for
 schema-backed structured payloads, encrypted blobs for sealed content).
 
 **JSON:**
