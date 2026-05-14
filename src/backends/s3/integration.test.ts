@@ -32,10 +32,20 @@ function createS3Executor(): S3Executor {
       body: StorePayload,
       contentType: string,
     ): Promise<void> {
+      // Collect streams to bytes before the PUT. A streaming body to a
+      // real S3-compatible endpoint needs sigv4 chunked signing (or
+      // multipart upload); Deno's bare `fetch` also requires
+      // `duplex: "half"` to send a stream body and S3 / MinIO won't
+      // happily accept `Transfer-Encoding: chunked` without it. The
+      // test executor stays bytes-only for the wire; the Store still
+      // accepts the union and the buffering lives in the executor.
+      const bytes = body instanceof Uint8Array
+        ? body
+        : new Uint8Array(await new Response(body).arrayBuffer());
       const res = await fetch(url(key), {
         method: "PUT",
         headers: { "Content-Type": contentType },
-        body: body as BodyInit,
+        body: bytes as BodyInit,
       });
       if (!res.ok) {
         const text = await res.text();
