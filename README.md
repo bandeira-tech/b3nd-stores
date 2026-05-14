@@ -171,6 +171,29 @@ const user = UserProfile.fromBinary(payload as Uint8Array);
 // user.name === "Alice"
 ```
 
+**FlatBuffers** (generated from a `.fbs` with `flatc`):
+
+```ts
+import * as flatbuffers from "flatbuffers";
+import { UserProfile } from "./gen/user_generated.ts";
+
+const builder = new flatbuffers.Builder(64);
+const name = builder.createString("Alice");
+UserProfile.startUserProfile(builder);
+UserProfile.addName(builder, name);
+builder.finish(UserProfile.endUserProfile(builder));
+
+await store.write([
+  { uri: "mutable://users/alice", payload: builder.asUint8Array() },
+]);
+
+const [[, payload]] = await store.read(["mutable://users/alice"]);
+const user = UserProfile.getRootAsUserProfile(
+  new flatbuffers.ByteBuffer(payload as Uint8Array),
+);
+// user.name() === "Alice"   ← accessor reads from the buffer on demand
+```
+
 Only the encode/decode line changes. The Store, the client, the wire shape, and
 the read contract stay the same.
 
