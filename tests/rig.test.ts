@@ -1,10 +1,8 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { Identity } from "@bandeira-tech/b3nd-core/identity";
-import { getSupportedProtocols } from "../src/factory/factory.ts";
-import type { BackendResolver } from "../src/factory/factory.ts";
 import { Rig } from "@bandeira-tech/b3nd-core/rig";
 import type { Program } from "@bandeira-tech/b3nd-core/types";
-import { MemoryStore } from "../src/backends/memory/store.ts";
+import { MemoryStore } from "../src/memory/store.ts";
 import { DataStoreClient } from "../src/clients/data-store-client.ts";
 import { connection } from "@bandeira-tech/b3nd-core/rig";
 import { JsonClient } from "./helpers/json-client.ts";
@@ -22,15 +20,6 @@ async function readData<T>(rig: Rig, url: string): Promise<T | null> {
 function memClient() {
   return new JsonClient(new DataStoreClient(new MemoryStore()));
 }
-
-/**
- * Memory backend resolver — the factory no longer ships built-in
- * protocols, so factory-based tests register this explicitly.
- */
-const memoryResolver: BackendResolver = {
-  protocols: ["memory:"],
-  resolve: () => new MemoryStore(),
-};
 
 /**
  * Create a permissive test program set that classifies every message
@@ -456,30 +445,6 @@ Deno.test("Identity.decrypt - throws for public-only identity", async () => {
   );
 });
 
-// ── getSupportedProtocols tests ──
-
-Deno.test("getSupportedProtocols - empty without registered backends", () => {
-  const protocols = getSupportedProtocols();
-  assertEquals(protocols.length, 0);
-});
-
-Deno.test("getSupportedProtocols - lists only registered backends", () => {
-  const fakeBackend: BackendResolver = {
-    protocols: ["postgresql:", "postgres:"],
-    resolve: () => new MemoryStore(),
-  };
-  const protocols = getSupportedProtocols([fakeBackend, memoryResolver]);
-  assertEquals(protocols.includes("postgresql://"), true);
-  assertEquals(protocols.includes("postgres://"), true);
-  assertEquals(protocols.includes("memory://"), true);
-  // Transport schemes never appear — out of factory scope.
-  assertEquals(protocols.includes("http://"), false);
-  assertEquals(protocols.includes("ws://"), false);
-});
-
-// Rig.init no longer exists — unsupported protocol test removed
-// (createClientFromUrl tests below still cover protocol rejection)
-
 // ── Rig tests ──
 
 Deno.test("Rig -with memory backend", async () => {
@@ -710,34 +675,6 @@ Deno.test("Rig.read - handles empty URI array", async () => {
   });
   const results = await rig.read([]);
   assertEquals(results.length, 0);
-});
-
-// ── createClientFromUrl tests ──
-
-Deno.test("createClientFromUrl - creates memory client from URL", async () => {
-  const { createClientFromUrl } = await import("../src/factory/factory.ts");
-  const client = new JsonClient(
-    await createClientFromUrl("memory://", {
-      backends: [memoryResolver],
-    }),
-  );
-  const health = await client.status();
-  assertEquals(health.status, "healthy");
-
-  // Write and read back
-  await client.receive([["mutable://open/test", { val: 1 }]]);
-  const reads = await client.read(["mutable://open/test"]);
-  const read = reads[0];
-  assertEquals(read?.[1], { val: 1 });
-});
-
-Deno.test("createClientFromUrl - rejects unknown protocol", async () => {
-  const { createClientFromUrl } = await import("../src/factory/factory.ts");
-  await assertRejects(
-    () => createClientFromUrl("ftp://example.com"),
-    Error,
-    "Unsupported storage URL protocol",
-  );
 });
 
 // readData / readOrThrow / exists / count / watch / watchAll were
@@ -1175,268 +1112,6 @@ Deno.test("Rig - multi-connection dispatch with programs rejects via rejecter", 
 
   const [result] = await rig.receive([["mutable://unknown/x", "nope"]]);
   assertEquals(result.accepted, false);
-});
-
-// ── No-backend-registered rejection tests (createClientFromUrl) ──
-
-Deno.test("createClientFromUrl - rejects postgresql without registered backend", async () => {
-  const { createClientFromUrl } = await import("../src/factory/factory.ts");
-  await assertRejects(
-    () => createClientFromUrl("postgresql://localhost/db"),
-    Error,
-    "Unsupported storage URL protocol",
-  );
-});
-
-Deno.test("createClientFromUrl - rejects mongodb without registered backend", async () => {
-  const { createClientFromUrl } = await import("../src/factory/factory.ts");
-  await assertRejects(
-    () => createClientFromUrl("mongodb://localhost/db"),
-    Error,
-    "Unsupported storage URL protocol",
-  );
-});
-
-Deno.test("createClientFromUrl - rejects sqlite without registered backend", async () => {
-  const { createClientFromUrl } = await import("../src/factory/factory.ts");
-  await assertRejects(
-    () => createClientFromUrl("sqlite:///tmp/test.db"),
-    Error,
-    "Unsupported storage URL protocol",
-  );
-});
-
-// ── createStoreFromUrl tests ──
-
-Deno.test("createStoreFromUrl - creates memory store", async () => {
-  const { createStoreFromUrl } = await import("../src/factory/factory.ts");
-  const store = await createStoreFromUrl("memory://", {
-    backends: [memoryResolver],
-  });
-
-  const payload = new TextEncoder().encode(
-    JSON.stringify({ values: { fire: 10 }, val: 1 }),
-  );
-  await store.write([{ uri: "store://test/key", payload }]);
-  const results = await store.read(["store://test/key"]);
-  assertEquals(results[0]?.[1], payload);
-});
-
-// Transport URL schemes (http://, ws://, console://, grpc://) are no
-// longer handled by this factory — they produce transport clients,
-// which live in @bandeira-tech/b3nd-move and are constructed directly.
-// The factory rejects them as unsupported storage protocols.
-
-Deno.test("createStoreFromUrl - rejects console URL", async () => {
-  const { createStoreFromUrl } = await import("../src/factory/factory.ts");
-  await assertRejects(
-    () => createStoreFromUrl("console://debug"),
-    Error,
-    "Unsupported storage URL protocol",
-  );
-});
-
-Deno.test("createStoreFromUrl - rejects http URL", async () => {
-  const { createStoreFromUrl } = await import("../src/factory/factory.ts");
-  await assertRejects(
-    () => createStoreFromUrl("http://example.com"),
-    Error,
-    "Unsupported storage URL protocol",
-  );
-});
-
-Deno.test("createStoreFromUrl - rejects ws URL", async () => {
-  const { createStoreFromUrl } = await import("../src/factory/factory.ts");
-  await assertRejects(
-    () => createStoreFromUrl("ws://example.com"),
-    Error,
-    "Unsupported storage URL protocol",
-  );
-});
-
-Deno.test("createStoreFromUrl - rejects postgresql without registered backend", async () => {
-  const { createStoreFromUrl } = await import("../src/factory/factory.ts");
-  await assertRejects(
-    () => createStoreFromUrl("postgresql://localhost/db"),
-    Error,
-    "Unsupported storage URL protocol",
-  );
-});
-
-Deno.test("createStoreFromUrl - rejects unknown protocol", async () => {
-  const { createStoreFromUrl } = await import("../src/factory/factory.ts");
-  await assertRejects(
-    () => createStoreFromUrl("ftp://example.com"),
-    Error,
-    "Unsupported storage URL protocol",
-  );
-});
-
-// ── createClientFromUrl with client class arg ──
-
-Deno.test("createClientFromUrl - accepts client class arg", async () => {
-  const { createClientFromUrl } = await import("../src/factory/factory.ts");
-  const { DataStoreClient } = await import(
-    "../src/clients/data-store-client.ts"
-  );
-
-  const client = await createClientFromUrl("memory://", DataStoreClient, {
-    backends: [memoryResolver],
-  });
-  const health = await client.status();
-  assertEquals(health.status, "healthy");
-});
-
-Deno.test("createClientFromUrl - client class in options", async () => {
-  const { createClientFromUrl } = await import("../src/factory/factory.ts");
-  const { DataStoreClient } = await import(
-    "../src/clients/data-store-client.ts"
-  );
-
-  const client = await createClientFromUrl("memory://", {
-    client: DataStoreClient,
-    backends: [memoryResolver],
-  });
-  const health = await client.status();
-  assertEquals(health.status, "healthy");
-});
-
-Deno.test("createClientFromUrl - defaults to SimpleClient for storage", async () => {
-  const { createClientFromUrl } = await import("../src/factory/factory.ts");
-
-  const inner = await createClientFromUrl("memory://", {
-    backends: [memoryResolver],
-  });
-  const client = new JsonClient(inner);
-  const health = await client.status();
-  assertEquals(health.status, "healthy");
-
-  // SimpleClient: receive just writes, no envelope decomposition
-  await client.receive([["store://test/key", { val: 1 }]]);
-  const reads = await client.read(["store://test/key"]);
-  assertEquals(reads[0]?.[1], { val: 1 });
-});
-
-// ── createStoreResolver tests ──
-
-Deno.test("createStoreResolver - binds backends once, resolves many URLs", async () => {
-  const { createStoreResolver } = await import("../src/factory/factory.ts");
-
-  const resolveStore = createStoreResolver([memoryResolver]);
-
-  // Resolve multiple memory stores from a single resolver
-  const stores = await Promise.all([
-    resolveStore("memory://"),
-    resolveStore("memory://"),
-  ]);
-
-  assertEquals(stores.length, 2);
-  // Each call creates a distinct store
-  for (const store of stores) {
-    const status = await store.status();
-    assertEquals(status.status, "healthy");
-  }
-});
-
-Deno.test("createStoreResolver - rejects transport protocols", async () => {
-  const { createStoreResolver } = await import("../src/factory/factory.ts");
-
-  const resolveStore = createStoreResolver([memoryResolver]);
-  await assertRejects(
-    () => resolveStore("http://example.com"),
-    Error,
-    "Unsupported storage URL protocol",
-  );
-});
-
-// ── createClientResolver tests ──
-
-Deno.test("createClientResolver - resolves memory URL with default SimpleClient", async () => {
-  const { createClientResolver } = await import("../src/factory/factory.ts");
-  const { SimpleClient } = await import("../src/clients/simple-client.ts");
-
-  const resolveClient = createClientResolver(SimpleClient, [memoryResolver]);
-  const client = new JsonClient(await resolveClient("memory://"));
-  const health = await client.status();
-  assertEquals(health.status, "healthy");
-
-  // SimpleClient: receive just writes, no envelope decomposition
-  await client.receive([["store://test/key", { val: 1 }]]);
-  const reads = await client.read(["store://test/key"]);
-  assertEquals(reads[0]?.[1], { val: 1 });
-});
-
-Deno.test("createClientResolver - resolves with DataStoreClient", async () => {
-  const { createClientResolver } = await import("../src/factory/factory.ts");
-  const { DataStoreClient } = await import(
-    "../src/clients/data-store-client.ts"
-  );
-
-  const resolveClient = createClientResolver(DataStoreClient, [memoryResolver]);
-  const client = await resolveClient("memory://");
-  const health = await client.status();
-  assertEquals(health.status, "healthy");
-});
-
-Deno.test("createClientResolver - maps multiple URLs", async () => {
-  const { createClientResolver } = await import("../src/factory/factory.ts");
-  const { SimpleClient } = await import("../src/clients/simple-client.ts");
-
-  const resolveClient = createClientResolver(SimpleClient, [memoryResolver]);
-  const urls = ["memory://", "memory://", "memory://"];
-  const clients = await Promise.all(urls.map(resolveClient));
-
-  assertEquals(clients.length, 3);
-  for (const client of clients) {
-    const health = await client.status();
-    assertEquals(health.status, "healthy");
-  }
-});
-
-// ── BackendResolver registry tests ──
-
-Deno.test("createStoreFromUrl - resolves registered backend", async () => {
-  const { createStoreFromUrl } = await import("../src/factory/factory.ts");
-
-  const fakeBackend: BackendResolver = {
-    protocols: ["fake:"],
-    resolve: () => new MemoryStore(),
-  };
-
-  const store = await createStoreFromUrl("fake://test", {
-    backends: [fakeBackend],
-  });
-  const status = await store.status();
-  assertEquals(status.status, "healthy");
-});
-
-Deno.test("createClientFromUrl - resolves registered backend", async () => {
-  const { createClientFromUrl } = await import("../src/factory/factory.ts");
-
-  const fakeBackend: BackendResolver = {
-    protocols: ["fake:"],
-    resolve: () => new MemoryStore(),
-  };
-
-  const client = await createClientFromUrl("fake://test", {
-    backends: [fakeBackend],
-  });
-  const health = await client.status();
-  assertEquals(health.status, "healthy");
-});
-
-Deno.test("createStoreResolver - passes backends through", async () => {
-  const { createStoreResolver } = await import("../src/factory/factory.ts");
-
-  const fakeBackend: BackendResolver = {
-    protocols: ["fake:"],
-    resolve: () => new MemoryStore(),
-  };
-
-  const resolveStore = createStoreResolver([fakeBackend]);
-  const store = await resolveStore("fake://test");
-  const status = await store.status();
-  assertEquals(status.status, "healthy");
 });
 
 // ── Identity edge cases ──

@@ -9,7 +9,7 @@
 /// <reference lib="deno.ns" />
 
 import { assertEquals, assertRejects } from "@std/assert";
-import { MemoryStore } from "../src/backends/memory/store.ts";
+import { MemoryStore } from "../src/memory/store.ts";
 import { SimpleClient } from "../src/clients/simple-client.ts";
 import type {
   ProtocolInterfaceNode,

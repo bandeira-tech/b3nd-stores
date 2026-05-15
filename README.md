@@ -42,10 +42,9 @@ of your bundle.
 // Narrow imports — footprint-aware
 import { PostgresStore } from "@bandeira-tech/b3nd-save/postgres";
 import { SimpleClient } from "@bandeira-tech/b3nd-save/clients";
-import { createStoreFromUrl } from "@bandeira-tech/b3nd-save/factory";
 
 // Root barrel — convenient, namespaced
-import { clients, factory, postgres } from "@bandeira-tech/b3nd-save";
+import { clients, postgres } from "@bandeira-tech/b3nd-save";
 const store = new postgres.PostgresStore("myapp", executor);
 ```
 
@@ -68,21 +67,22 @@ const store = new postgres.PostgresStore("myapp", executor);
 buffering) on this backend. Buffered backends collect any streamed write input
 to bytes before storing and always return `Uint8Array` on read.
 
-## Clients and factory
+## Clients and backend-author helpers
 
 - **`@bandeira-tech/b3nd-save/clients`** — `SimpleClient` and `DataStoreClient`.
   These wrap any `Store` to produce a `ProtocolInterfaceNode` that a `Rig` can
   talk to.
-- **`@bandeira-tech/b3nd-save/factory`** — `createStoreFromUrl`,
-  `createClientFromUrl`, `createStoreResolver`, `createClientResolver`. Maps URL
-  schemes to Stores or clients. **No protocols are built-in** — every backend
-  (memory included) plugs in via `BackendResolver[]`. The factory resolves only
-  what you register.
-- **`@bandeira-tech/b3nd-save/shared`** — helpers for backend authors:
-  `dispatchRead`, `validateReadParams`, `applyReadParams`, `storageFailure`
-  (catch-block helper that builds a structured `B3ndError`), and `toBytes` /
-  `toStream` payload normalizers. Use these when implementing a new `Store` so
-  it matches the contract the built-ins follow.
+- **`@bandeira-tech/b3nd-save/dispatch`** — `dispatchRead` helper that handles
+  the `fn=read|ls|count|x-*` switch so every backend stays consistent.
+- **`@bandeira-tech/b3nd-save/read`** — `validateReadParams`, `applyReadParams`
+  for the read-params contract.
+- **`@bandeira-tech/b3nd-save/errors`** — `storageFailure`, the catch-block
+  helper that builds a structured `B3ndError` for Store result tuples.
+- **`@bandeira-tech/b3nd-save/payload`** — `toBytes` / `toStream` payload
+  normalizers for the `Uint8Array | ReadableStream<Uint8Array>` union.
+
+Use these when implementing a new `Store` so it matches the contract the
+built-ins follow.
 
 ## Quick start (Postgres)
 
@@ -274,8 +274,7 @@ Throws on `pattern`, `cursor`, unknown `sortBy`, and unknown `format`.
 ## Testing
 
 - `deno task test` — runs every store's unit suite against an in-memory mock,
-  plus the client and factory tests and the cross-cutting integration suite
-  under `tests/`.
+  plus the client tests and the cross-cutting integration suite under `tests/`.
 - `deno task test:integration:{postgres,mongo,sqlite,fs,ipfs,s3,elasticsearch}`
   — runs the same suite against real backends. Wired up in CI; locally requires
   the matching service running on the conventional port.
