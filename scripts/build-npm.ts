@@ -9,7 +9,7 @@
  * Each subpath is environment-specific by design:
  *   - postgres / mongo / sqlite / fs / ipfs / s3 / elasticsearch  → Node
  *   - indexeddb / localstorage                                    → browser
- *   - factory / clients / shared / memory                         → both
+ *   - clients / memory / errors / payload / read / dispatch       → both
  */
 
 import { build, emptyDir } from "jsr:@deno/dnt@^0.42.1";
@@ -22,19 +22,21 @@ await emptyDir("./npm");
 await build({
   entryPoints: [
     { name: ".", path: "./src/mod.ts" },
-    { name: "./factory", path: "./src/factory/mod.ts" },
     { name: "./clients", path: "./src/clients/mod.ts" },
-    { name: "./shared", path: "./src/shared/mod.ts" },
-    { name: "./memory", path: "./src/backends/memory/mod.ts" },
-    { name: "./postgres", path: "./src/backends/postgres/mod.ts" },
-    { name: "./mongo", path: "./src/backends/mongo/mod.ts" },
-    { name: "./sqlite", path: "./src/backends/sqlite/mod.ts" },
-    { name: "./fs", path: "./src/backends/fs/mod.ts" },
-    { name: "./ipfs", path: "./src/backends/ipfs/mod.ts" },
-    { name: "./s3", path: "./src/backends/s3/mod.ts" },
-    { name: "./elasticsearch", path: "./src/backends/elasticsearch/mod.ts" },
-    { name: "./localstorage", path: "./src/backends/localstorage/mod.ts" },
-    { name: "./indexeddb", path: "./src/backends/indexeddb/mod.ts" },
+    { name: "./errors", path: "./src/errors.ts" },
+    { name: "./payload", path: "./src/payload.ts" },
+    { name: "./read", path: "./src/read.ts" },
+    { name: "./dispatch", path: "./src/dispatch.ts" },
+    { name: "./memory", path: "./src/memory/mod.ts" },
+    { name: "./postgres", path: "./src/postgres/mod.ts" },
+    { name: "./mongo", path: "./src/mongo/mod.ts" },
+    { name: "./sqlite", path: "./src/sqlite/mod.ts" },
+    { name: "./fs", path: "./src/fs/mod.ts" },
+    { name: "./ipfs", path: "./src/ipfs/mod.ts" },
+    { name: "./s3", path: "./src/s3/mod.ts" },
+    { name: "./elasticsearch", path: "./src/elasticsearch/mod.ts" },
+    { name: "./localstorage", path: "./src/localstorage/mod.ts" },
+    { name: "./indexeddb", path: "./src/indexeddb/mod.ts" },
   ],
   outDir: "./npm",
   shims: { deno: false },

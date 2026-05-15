@@ -8,7 +8,6 @@
  * `@bandeira-tech/b3nd-save/postgres`).
  *
  * Namespaces:
- *   factory       — URL → Store / Client resolution (no built-in protocols)
  *   clients       — Store → ProtocolInterfaceNode adapters
  *   memory        — In-memory reference backend
  *   postgres, mongo, sqlite, fs, ipfs, s3, elasticsearch,
@@ -26,15 +25,14 @@ export type {
   StoreWriteResult,
 } from "./types.ts";
 
-export * as factory from "./factory/mod.ts";
 export * as clients from "./clients/mod.ts";
-export * as memory from "./backends/memory/mod.ts";
-export * as postgres from "./backends/postgres/mod.ts";
-export * as mongo from "./backends/mongo/mod.ts";
-export * as sqlite from "./backends/sqlite/mod.ts";
-export * as fs from "./backends/fs/mod.ts";
-export * as ipfs from "./backends/ipfs/mod.ts";
-export * as s3 from "./backends/s3/mod.ts";
-export * as elasticsearch from "./backends/elasticsearch/mod.ts";
-export * as localstorage from "./backends/localstorage/mod.ts";
-export * as indexeddb from "./backends/indexeddb/mod.ts";
+export * as memory from "./memory/mod.ts";
+export * as postgres from "./postgres/mod.ts";
+export * as mongo from "./mongo/mod.ts";
+export * as sqlite from "./sqlite/mod.ts";
+export * as fs from "./fs/mod.ts";
+export * as ipfs from "./ipfs/mod.ts";
+export * as s3 from "./s3/mod.ts";
+export * as elasticsearch from "./elasticsearch/mod.ts";
+export * as localstorage from "./localstorage/mod.ts";
+export * as indexeddb from "./indexeddb/mod.ts";

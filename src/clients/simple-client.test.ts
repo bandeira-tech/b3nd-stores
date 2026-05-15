@@ -9,7 +9,7 @@
 
 import { assertEquals, assertInstanceOf } from "@std/assert";
 import { SimpleClient } from "./simple-client.ts";
-import { MemoryStore } from "../backends/memory/store.ts";
+import { MemoryStore } from "../memory/store.ts";
 import type { Store } from "../types.ts";
 
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
