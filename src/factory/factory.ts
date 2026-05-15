@@ -16,15 +16,15 @@
  *
  * **Transport protocols are out of scope.** The factory does not
  * handle `http://`, `ws://`, `console://`, or `grpc://` URLs. Those
- * produce *transport clients* (live in `@bandeira-tech/b3nd-servers`
+ * produce *transport clients* (live in `@bandeira-tech/b3nd-move`
  * and `@bandeira-tech/b3nd-core/client-console`), not Stores; they
  * have no consistent factory pattern across schemes. Construct them
  * directly:
  *
- *   new HttpClient({ url })                      // b3nd-servers/http/client
- *   new WebSocketClient({ url })                 // b3nd-servers/ws/client
+ *   new HttpClient({ url })                      // b3nd-move/http/client
+ *   new WebSocketClient({ url })                 // b3nd-move/ws/client
  *   new ConsoleClient(label)                     // b3nd-core/client-console
- *   new GrpcHttpClient({ url })                  // b3nd-servers/grpc/http/client
+ *   new GrpcHttpClient({ url })                  // b3nd-move/grpc/http/client
  */
 
 import type { ProtocolInterfaceNode } from "@bandeira-tech/b3nd-core/types";
@@ -111,7 +111,7 @@ export async function createStoreFromUrl(
       `Supported: ${supported.join(", ")}. ` +
       `Transport URLs (http://, ws://, console://, grpc://) are not ` +
       `handled by this factory — construct those clients directly ` +
-      `from @bandeira-tech/b3nd-servers/* or @bandeira-tech/b3nd-core/client-console.`,
+      `from @bandeira-tech/b3nd-move/* or @bandeira-tech/b3nd-core/client-console.`,
   );
 }
 
@@ -123,7 +123,7 @@ export async function createStoreFromUrl(
  * client class (defaults to SimpleClient).
  *
  * Transport URLs (http://, ws://, etc.) are out of scope — construct
- * those clients directly from b3nd-servers / b3nd-core.
+ * those clients directly from b3nd-move / b3nd-core.
  */
 export async function createClientFromUrl(
   url: string,

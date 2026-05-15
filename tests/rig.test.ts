@@ -54,7 +54,7 @@ function createTestPrograms(): Record<string, Program> {
 import type { EncryptedPayload } from "@bandeira-tech/b3nd-core/encrypt";
 
 // The "Rig observe — HttpClient SSE end-to-end" integration that used
-// to live at the bottom of this file moved to @bandeira-tech/b3nd-servers
+// to live at the bottom of this file moved to @bandeira-tech/b3nd-move
 // when HttpClient + httpApi moved there. It is now a rig+HTTP test, not
 // a rig+Store test, and belongs alongside its transport.
 
@@ -1224,8 +1224,8 @@ Deno.test("createStoreFromUrl - creates memory store", async () => {
 
 // Transport URL schemes (http://, ws://, console://, grpc://) are no
 // longer handled by this factory — they produce transport clients,
-// which live in @bandeira-tech/b3nd-servers and are constructed
-// directly. The factory rejects them as unsupported storage protocols.
+// which live in @bandeira-tech/b3nd-move and are constructed directly.
+// The factory rejects them as unsupported storage protocols.
 
 Deno.test("createStoreFromUrl - rejects console URL", async () => {
   const { createStoreFromUrl } = await import("../src/factory/factory.ts");
