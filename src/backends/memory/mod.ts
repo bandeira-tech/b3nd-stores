@@ -8,7 +8,7 @@
  *
  * Note: this Store's `fn=ls` and `fn=count` are RECURSIVE (deep walk),
  * which differs from the *shallow direct-leaves* contract enforced by
- * the rest of the b3nd-stores package. The two contracts are
+ * the rest of the b3nd-save package. The two contracts are
  * intentionally different — see the project memory's locked decisions.
  * If you want shallow semantics in-memory, layer your own thin
  * shallow-only Store over a `Map`, or use one of the other backends.
