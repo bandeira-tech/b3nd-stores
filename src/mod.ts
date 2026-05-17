@@ -25,6 +25,15 @@ export type {
   StoreWriteResult,
 } from "./types.ts";
 
+export type {
+  EntityAdapter,
+  EntityField,
+  EntityRecord,
+  EntitySchema,
+  EntitySupport,
+} from "./entity.ts";
+export { TYPE_TAGS } from "./entity.ts";
+
 export * as clients from "./clients/mod.ts";
 export * as memory from "./memory/mod.ts";
 export * as postgres from "./postgres/mod.ts";

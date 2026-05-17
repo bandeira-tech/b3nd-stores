@@ -33,6 +33,7 @@ import type {
   StoreEntry,
   StoreWriteResult,
 } from "../types.ts";
+import { MemoryEntityAdapter } from "./entity-adapter.ts";
 
 type StorageNode = {
   value?: Uint8Array;
@@ -59,9 +60,15 @@ function resolveTarget(
 
 export class MemoryStore implements Store {
   private storage: Storage;
+  private _entityAdapter: MemoryEntityAdapter | null = null;
 
   constructor(storage?: Storage) {
     this.storage = storage || new Map();
+  }
+
+  entityAdapter(): MemoryEntityAdapter {
+    if (!this._entityAdapter) this._entityAdapter = new MemoryEntityAdapter();
+    return this._entityAdapter;
   }
 
   // ── Write ────────────────────────────────────────────────────────

@@ -14,3 +14,4 @@
  */
 
 export { MemoryStore } from "./store.ts";
+export { MemoryEntityAdapter } from "./entity-adapter.ts";
