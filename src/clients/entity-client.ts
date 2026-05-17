@@ -1,31 +1,24 @@
 /**
- * EntityClient — schema-aware ProtocolInterfaceNode over a Store.
+ * EntityClient — schema-aware ProtocolInterfaceNode over an EntityStore.
  *
- * Wraps a `(schema, store)` pair: the store contributes an
- * `EntityAdapter` (Postgres tables, the in-memory parallel map, etc.),
- * the schema names the fields the client will route through it. The
- * client then exposes the standard `ProtocolInterfaceNode` so a Rig
- * can plug it into a `data://…` route.
+ * The store is multi-entity; the client picks the **target** entity
+ * it is currently routing to. Wire payloads on the rig are
+ * `EntityRecord | null`, pass-through to the underlying store:
  *
- * ```ts
- * const client = new EntityClient(userSchema, new MemoryStore());
- * rig({ receive: { connect: { "data://users": client } } });
- * ```
+ *   `receive([uri, record])` → store.write(target, [{ uri, record }])
+ *   `receive([uri, null])`   → store.delete(target, [uri])
+ *   `read(urls)`             → store.read(target, urls)
  *
- * Lifecycle: `ensureEntity` runs lazily on the first `receive` /
- * `read` (or eagerly via {@link init}). It is idempotent — repeat
- * calls hand back the cached support report.
+ * The target can be swapped at runtime via {@link setTarget} — the
+ * store does not need to be re-initialised, since `ensureEntity` for
+ * the new schema is fired the next time it is needed. Useful when a
+ * single client routes multiple entities by reconfiguration rather
+ * than by URI pattern.
  *
- * Wire conventions:
- *  - `receive([uri, record])`   → adapter.writeEntity
- *  - `receive([uri, null])`     → adapter.deleteEntity (delete-as-data,
- *    same convention as DataStoreClient)
- *  - `read([uri])`              → adapter.readEntity (point read)
- *
- * Unsupported fields reported by `ensureEntity` are dropped on write
- * (the adapter projects only the supported field set). The full
- * {@link EntitySupport} is available via {@link support} so callers
- * can surface a warning, abort, or react however they want.
+ * The store is strict: any mismatch between the record and the
+ * target schema comes back as a `ReceiveResult` failure for that
+ * entry. EntityClient does not coerce or drop — that's a wiring
+ * concern surfaced for a human to fix.
  */
 
 import type {
@@ -36,9 +29,8 @@ import type {
   StatusResult,
 } from "@bandeira-tech/b3nd-core/types";
 import { ObserveEmitter } from "@bandeira-tech/b3nd-core";
-import type { Store } from "../types.ts";
+import type { EntityStore } from "../entity-store.ts";
 import type {
-  EntityAdapter,
   EntityRecord,
   EntitySchema,
   EntitySupport,
@@ -46,55 +38,49 @@ import type {
 
 export class EntityClient extends ObserveEmitter
   implements ProtocolInterfaceNode {
-  readonly store: Store;
-  readonly schema: EntitySchema;
-  private readonly adapter: EntityAdapter;
-  private _support: EntitySupport | null = null;
-  private _initPromise: Promise<EntitySupport> | null = null;
+  readonly store: EntityStore;
+  private _target: EntitySchema;
+  private _ensured = new Map<string, Promise<EntitySupport>>();
 
-  constructor(schema: EntitySchema, store: Store) {
+  constructor(target: EntitySchema, store: EntityStore) {
     super();
-    if (!store.entityAdapter) {
-      throw new Error(
-        `EntityClient: store does not expose entityAdapter() — ` +
-          `byte-only stores cannot host entities`,
-      );
-    }
-    const adapter = store.entityAdapter();
-    if (!adapter) {
-      throw new Error(
-        `EntityClient: store.entityAdapter() returned null — ` +
-          `this store cannot host the '${schema.name}' entity`,
-      );
-    }
     this.store = store;
-    this.schema = schema;
-    this.adapter = adapter;
+    this._target = target;
   }
 
-  /** Eagerly provision the entity on the underlying medium. */
-  init(): Promise<EntitySupport> {
-    if (this._support) return Promise.resolve(this._support);
-    if (this._initPromise) return this._initPromise;
-    this._initPromise = this.adapter.ensureEntity(this.schema).then((s) => {
-      this._support = s;
-      return s;
-    });
-    return this._initPromise;
+  /** The schema currently being routed. */
+  get target(): EntitySchema {
+    return this._target;
   }
 
   /**
-   * The support report returned by the adapter's `ensureEntity`.
-   * `null` until {@link init} (or the first `receive`/`read`) resolves.
+   * Swap the target schema. The next operation will lazily provision
+   * the new entity on the store; existing data under other entities
+   * is untouched.
    */
-  get support(): EntitySupport | null {
-    return this._support;
+  setTarget(schema: EntitySchema): void {
+    this._target = schema;
+  }
+
+  /**
+   * Eagerly provision the current target on the underlying store.
+   * Returns the {@link EntitySupport} so the caller can see which
+   * fields the medium accepted. Idempotent.
+   */
+  init(): Promise<EntitySupport> {
+    const key = this._target.name;
+    const cached = this._ensured.get(key);
+    if (cached) return cached;
+    const p = this.store.ensureEntity(this._target);
+    this._ensured.set(key, p);
+    return p;
   }
 
   async receive(
     msgs: Message<EntityRecord | null>[],
   ): Promise<ReceiveResult[]> {
     await this.init();
+    const target = this._target;
 
     const results: ReceiveResult[] = new Array(msgs.length);
     const writes: { uri: string; record: EntityRecord; index: number }[] = [];
@@ -106,16 +92,13 @@ export class EntityClient extends ObserveEmitter
         results[i] = { accepted: false, error: "Message URI is required" };
         continue;
       }
-      if (payload === null) {
-        deletes.push({ uri, index: i });
-      } else {
-        writes.push({ uri, record: payload, index: i });
-      }
+      if (payload === null) deletes.push({ uri, index: i });
+      else writes.push({ uri, record: payload, index: i });
     }
 
     if (writes.length > 0) {
-      const r = await this.adapter.writeEntity(
-        this.schema.name,
+      const r = await this.store.write(
+        target,
         writes.map(({ uri, record }) => ({ uri, record })),
       );
       for (let j = 0; j < r.length; j++) {
@@ -126,10 +109,7 @@ export class EntityClient extends ObserveEmitter
     }
 
     if (deletes.length > 0) {
-      const r = await this.adapter.deleteEntity(
-        this.schema.name,
-        deletes.map((d) => d.uri),
-      );
+      const r = await this.store.delete(target, deletes.map((d) => d.uri));
       const deleted: string[] = [];
       for (let j = 0; j < r.length; j++) {
         const d = deletes[j];
@@ -146,15 +126,10 @@ export class EntityClient extends ObserveEmitter
     urls: string[],
   ): Promise<Output<T>[]> {
     await this.init();
-    const rows = await this.adapter.readEntity(this.schema.name, urls);
-    return rows as unknown as Output<T>[];
+    return this.store.read<T>(this._target, urls);
   }
 
-  async status(): Promise<StatusResult> {
-    const base = await this.store.status();
-    return {
-      ...base,
-      schema: [...(base.schema ?? []), `entity:${this.schema.name}`],
-    };
+  status(): Promise<StatusResult> {
+    return this.store.status();
   }
 }

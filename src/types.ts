@@ -25,7 +25,6 @@ import type {
   Output,
   StatusResult,
 } from "@bandeira-tech/b3nd-core/types";
-import type { EntityAdapter } from "./entity.ts";
 
 /**
  * Payload type accepted by `write` and produced by `read`.
@@ -109,11 +108,4 @@ export interface Store {
   delete(uris: string[]): Promise<DeleteResult[]>;
   status(): Promise<StatusResult>;
   capabilities?(): StoreCapabilities;
-  /**
-   * Optional structured-record adapter. Stores whose medium can
-   * organise data by field (Postgres, Mongo, Elasticsearch, the
-   * in-memory reference) return an {@link EntityAdapter}; byte-only
-   * backends return `null`. See `./entity.ts` for the contract.
-   */
-  entityAdapter?(): EntityAdapter | null;
 }

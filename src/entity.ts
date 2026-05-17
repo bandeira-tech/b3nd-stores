@@ -1,47 +1,51 @@
 /**
- * Entity types for structured, schema-aware storage.
+ * Entity schema types.
  *
- * `b3nd-save` is byte-storage first — `Store` writes opaque bytes by
- * URI. Some backends can also store *structured* records: a Postgres
- * table with typed columns, a Mongo collection of documents, an
- * Elasticsearch index. The entity layer is how `b3nd-save` lets those
- * backends expose that ability without compromising the byte-only
- * contract that every backend already implements.
+ * `b3nd-save` ships two store interfaces:
  *
- * The pieces:
+ * - `Store` — byte-only. Every backend in this package implements it.
+ * - `EntityStore` (see `./entity-store.ts`) — schema-aware: every
+ *   operation takes the `EntitySchema` it targets, so a single store
+ *   instance can host many entities side-by-side. Schema is per-call,
+ *   not pinned at construction.
  *
- * - `EntitySchema` describes an entity — its name and field names
- *   tagged with an open vocabulary of type strings.
- * - `EntityAdapter` is the optional capability a `Store` exposes when
- *   it can persist records by field. A `Store` returns one from
- *   `entityAdapter()` or `null` if it cannot.
- * - `EntityClient` (in `./clients/entity-client.ts`) wraps a
- *   `(schema, store)` pair and presents a `ProtocolInterfaceNode` so
- *   a Rig can route writes/reads through it.
+ * Entities are a client-layer concern. Clients map their wire payload
+ * (`Output<T>`) into `EntityRecord`s and call the store with an
+ * explicit schema; the store organises the medium accordingly
+ * (separate Postgres tables, separate Mongo collections, separate
+ * in-memory record maps). The schema travels with the data: there is
+ * no implicit "current entity" inside the store.
  *
  * ## Open type vocabulary
  *
- * `EntityField.type` is `string[]`. This package publishes the canonical
- * tag strings it knows about under {@link TYPE_TAGS}, but the type itself
- * is *not* a literal union — entities are shared across protocols and
- * custom stores, and one protocol's "money" or "geo" tag should travel
- * unchanged through stores that don't recognise it. A field may carry
- * multiple tags (e.g. `["string", "email"]`) — they are refinements,
- * not a union of value types. An adapter consults the tags it knows
- * to decide how to materialise the field, and reports any field whose
- * tags it cannot make sense of as unsupported.
+ * `EntityField.type` is `string[]`. The strings this package knows
+ * about live in {@link TYPE_TAGS}, but the field type itself is
+ * intentionally not a literal union — entities are shared across
+ * protocols and custom stores, and one protocol's `"money"` or
+ * `"geo"` tag should travel unchanged through stores that don't
+ * recognise it. A field may carry multiple tags (e.g.
+ * `["string", "email"]`) — they are refinements, not a value-type
+ * union. A store consults the tags it knows to decide how to
+ * materialise the field, and reports any field whose tags it cannot
+ * make sense of as unsupported.
+ *
+ * ## Coercion vs. error reporting
+ *
+ * The store is strict: anything that doesn't fit the schema becomes
+ * an error result so the rig wiring can be fixed. Coercion and field
+ * projection are the client's job — `ByteStorageClient` builds a
+ * `{ payload: bytes }` record from incoming bytes; `EntityClient`
+ * passes records through verbatim. If a record arrives with extra or
+ * mistyped fields, the store reports the error rather than silently
+ * dropping data.
  */
-
-import type { DeleteResult, Output } from "@bandeira-tech/b3nd-core/types";
-import type { StoreWriteResult } from "./types.ts";
 
 /**
  * Canonical type tags published by this package.
  *
- * Adapters in `b3nd-save` recognise these tags. Other protocols and
- * custom stores may freely add their own; the `type` field on
- * {@link EntityField} stays `string[]` so unknown tags pass through
- * intact.
+ * Stores in `b3nd-save` recognise these tags. Other protocols and
+ * custom stores may freely add their own; `EntityField.type` stays
+ * `string[]` so unknown tags pass through intact.
  */
 export const TYPE_TAGS = {
   STRING: "string",
@@ -57,10 +61,10 @@ export const TYPE_TAGS = {
  * A field of an entity — a name plus an open list of type tags.
  *
  * Multiple tags are refinements describing the same value (e.g.
- * `["string", "email"]` — a string value semantically an email).
- * An adapter that understands `"string"` can store the value;
- * the `"email"` tag is a hint for adapters that want to enforce
- * or index it differently.
+ * `["string", "email"]` — a string value semantically an email). A
+ * store that understands `"string"` can store the value; the
+ * `"email"` tag is a hint stores that want to validate or index
+ * differently can use.
  */
 export interface EntityField {
   name: string;
@@ -82,19 +86,18 @@ export interface EntitySchema {
 /**
  * A record of an entity — values keyed by field name. The type is
  * `Record<string, unknown>` because the schema is open: per-field
- * value types are decided by the tags an adapter understands. Adapter
- * implementations cast on the way in.
+ * value types are decided by the tags an adapter understands. Store
+ * implementations validate against the schema on the way in.
  */
 export type EntityRecord = Record<string, unknown>;
 
 /**
- * Per-field support reported by an adapter after `ensureEntity`.
+ * Per-field support reported by an `EntityStore` after `ensureEntity`.
  *
- * A field is *supported* when the adapter recognised at least one of
+ * A field is *supported* when the store recognised at least one of
  * its tags and was able to provision storage for it. Unsupported
- * fields carry a human-readable `reason` and are silently dropped on
- * write — the {@link EntityClient} surfaces them once at init time so
- * the caller can decide what to do.
+ * fields carry a human-readable `reason`. Stores do not silently
+ * drop unsupported fields on write — see the file header on coercion.
  */
 export interface EntitySupport {
   entity: string;
@@ -103,32 +106,14 @@ export interface EntitySupport {
 }
 
 /**
- * Adapter that lets a `Store` persist entity records.
+ * Canonical entity for raw-byte storage.
  *
- * A `Store` returns one from `entityAdapter()` when its medium can
- * organise data by field (a SQL table, a document store, a typed
- * key/value of objects). Byte-only backends return `null`.
- *
- * `ensureEntity` is the medium-setup step — create the table, the
- * collection, the index. It MUST be idempotent: calling it twice
- * with the same schema is a no-op. It returns the support report so
- * the client knows which fields the medium will round-trip.
- *
- * `writeEntity`, `readEntity`, `deleteEntity` are batch-shaped to
- * match `Store`. The entity face is independent from the byte face
- * of the host store — writes and deletes here do NOT affect bytes
- * stored at the same URI by `Store.write`/`Store.delete`, and vice
- * versa. Authors should not mix the two faces at the same URI.
+ * `EntityStore.write(BYTES_ENTITY, [{ uri, record: { payload: bytes }}])`
+ * is the canonical entity-shaped equivalent of `Store.write([{ uri,
+ * payload: bytes }])`. `ByteStorageClient` is built around this
+ * schema and is what byte-shaped wires plug into on an `EntityStore`.
  */
-export interface EntityAdapter {
-  ensureEntity(schema: EntitySchema): Promise<EntitySupport>;
-  writeEntity(
-    entity: string,
-    entries: { uri: string; record: EntityRecord }[],
-  ): Promise<StoreWriteResult[]>;
-  readEntity(
-    entity: string,
-    uris: string[],
-  ): Promise<Output<EntityRecord | undefined>[]>;
-  deleteEntity(entity: string, uris: string[]): Promise<DeleteResult[]>;
-}
+export const BYTES_ENTITY: EntitySchema = {
+  name: "bytes",
+  fields: [{ name: "payload", type: [TYPE_TAGS.BYTES] }],
+};
