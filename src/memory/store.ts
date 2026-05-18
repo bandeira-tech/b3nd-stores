@@ -1,39 +1,22 @@
 /**
- * MemoryStore — in-memory reference implementation of `Store` and
- * `EntityStore`.
+ * MemoryStore — in-memory reference implementation of `EntityStore`.
  *
- * Two faces, one storage:
+ * One store, many entities. Schema is per-call:
+ * `ensureEntity(schema)` + `write(schema, entries)` /
+ * `read(schema, urls)` / `delete(schema, uris)`.
  *
- * - `Store` (byte form): `write(entries)` / `read(urls)` /
- *   `delete(uris)` — what every byte-only backend in this package
- *   exposes. Used by the shared store suite and by `SaveClient` when
- *   it backs onto a byte-only store.
- * - `EntityStore` (entity form): `ensureEntity(schema)` and
- *   `write(schema, entries)` / `read(schema, urls)` /
- *   `delete(schema, uris)`. Schema is per-call, so one MemoryStore
- *   instance hosts many entities. `SaveClient` routes through this
- *   face when given a target schema (or its `BYTES_ENTITY` default).
- *
- * The byte form **redirects to the entity form with `BYTES_ENTITY`**
- * — there is one internal path, not two. Writes/reads that arrive
- * through `Store.write([{ uri, payload }])` are wrapped into
- * `{ uri, record: { payload } }` and processed by the same code as
- * `EntityStore.write(BYTES_ENTITY, ...)`. Both forms continue to
- * work; existing byte tests pass unchanged.
- *
- * Storage layout:
+ * Storage layout (transition shape):
  *
  * - `BYTES_ENTITY` records live in the per-program tree used for raw
- *   bytes (the recursive `fn=ls`/`fn=count` behavior is preserved).
+ *   bytes — the recursive `fn=ls`/`fn=count` behavior the rest of the
+ *   package's byte backends already provide.
  * - Every other entity lives in a flat `Map<uri, EntityRecord>` per
- *   entity name. `fn=ls`/`fn=count` over a custom entity returns
- *   the URIs in that map whose URI starts with the prefix (also
- *   recursive — same convention as bytes on this backend).
+ *   entity name. Direct-leaves only — same convention as the bytes
+ *   walk.
  *
- * Validation is strict — the store does not coerce. A record under
- * a schema may only contain keys declared in `schema.fields`; extra
- * keys produce a `StoreWriteResult` failure for that entry. Wiring
- * mismatches surface as errors so the rig can be fixed.
+ * Validation is strict: a record under `schema` may only contain keys
+ * declared in `schema.fields`. Extra keys produce a per-entry
+ * `StoreWriteResult` failure. The store does not coerce.
  */
 
 import type {
@@ -45,12 +28,7 @@ import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
 import { parseUrl } from "@bandeira-tech/b3nd-core/url";
 import { storageFailure } from "../errors.ts";
 import { toBytes } from "../payload.ts";
-import type {
-  Store,
-  StoreCapabilities,
-  StoreEntry,
-  StoreWriteResult,
-} from "../types.ts";
+import type { StoreCapabilities, StoreWriteResult } from "../types.ts";
 import type { EntityStore } from "../entity-store.ts";
 import {
   BYTES_ENTITY,
@@ -89,7 +67,7 @@ function isBytesSchema(schema: EntitySchema): boolean {
   return schema.name === BYTES_ENTITY.name;
 }
 
-export class MemoryStore implements Store, EntityStore {
+export class MemoryStore implements EntityStore {
   private storage: Storage;
   /** entityName → uri → record, for entities other than `bytes`. */
   private readonly records = new Map<string, Map<string, EntityRecord>>();
@@ -129,34 +107,9 @@ export class MemoryStore implements Store, EntityStore {
     return { entity: schema.name, supported, unsupported };
   }
 
-  // ── Write (overloaded: byte form ⇄ entity form) ──────────────────
+  // ── Write ────────────────────────────────────────────────────────
 
-  write(entries: StoreEntry[]): Promise<StoreWriteResult[]>;
-  write(
-    schema: EntitySchema,
-    entries: { uri: string; record: EntityRecord }[],
-  ): Promise<StoreWriteResult[]>;
   async write(
-    arg1: StoreEntry[] | EntitySchema,
-    arg2?: { uri: string; record: EntityRecord }[],
-  ): Promise<StoreWriteResult[]> {
-    if (Array.isArray(arg1)) {
-      // Byte form — redirect through entity form with BYTES_ENTITY.
-      // Walk serially (same shape as the legacy byte path) so the
-      // observe/bridge pipeline isn't held back by extra microtasks.
-      const records: { uri: string; record: EntityRecord }[] = [];
-      for (const e of arg1) {
-        records.push({
-          uri: e.uri,
-          record: { payload: await toBytes(e.payload) } as EntityRecord,
-        });
-      }
-      return this._writeEntity(BYTES_ENTITY, records);
-    }
-    return this._writeEntity(arg1, arg2!);
-  }
-
-  private async _writeEntity(
     schema: EntitySchema,
     entries: { uri: string; record: EntityRecord }[],
   ): Promise<StoreWriteResult[]> {
@@ -185,12 +138,15 @@ export class MemoryStore implements Store, EntityStore {
       try {
         if (isBytesSchema(schema)) {
           const payload = record.payload;
-          if (!(payload instanceof Uint8Array)) {
+          if (
+            !(payload instanceof Uint8Array) &&
+            !(payload instanceof ReadableStream)
+          ) {
             throw new Error(
-              `BYTES_ENTITY record.payload must be Uint8Array, got ${typeof payload}`,
+              `BYTES_ENTITY record.payload must be Uint8Array or ReadableStream, got ${typeof payload}`,
             );
           }
-          this._writeBytes(uri, payload);
+          this._writeBytes(uri, await toBytes(payload));
         } else {
           this.records.get(schema.name)!.set(uri, { ...record });
         }
@@ -225,36 +181,20 @@ export class MemoryStore implements Store, EntityStore {
     current.value = payload;
   }
 
-  // ── Read (overloaded: byte form ⇄ entity form) ───────────────────
+  // ── Read ─────────────────────────────────────────────────────────
 
-  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]>;
-  read<T = EntityRecord | undefined>(
-    schema: EntitySchema,
-    urls: string[],
-  ): Promise<Output<T>[]>;
   // deno-lint-ignore require-await
-  async read<T = unknown>(
-    arg1: string[] | EntitySchema,
-    arg2?: string[],
-  ): Promise<Output<T>[]> {
-    if (Array.isArray(arg1)) {
-      return this._readEntity<T>(BYTES_ENTITY, arg1, true);
-    }
-    return this._readEntity<T>(arg1, arg2!, false);
-  }
-
-  private _readEntity<T>(
+  async read<T = EntityRecord | undefined>(
     schema: EntitySchema,
     urls: string[],
-    bytesUnwrap: boolean,
-  ): Output<T>[] {
+  ): Promise<Output<T>[]> {
     return urls.map((url) => {
       const parsed = parseUrl(url);
       switch (parsed.fn) {
         case "read":
-          return [url, this._readOne(schema, parsed.uri, bytesUnwrap) as T];
+          return [url, this._readOne(schema, parsed.uri) as T];
         case "ls":
-          return [url, this._list(schema, parsed, bytesUnwrap) as T];
+          return [url, this._list(schema, parsed) as T];
         case "count":
           return [url, this._count(schema, parsed) as T];
         default:
@@ -263,15 +203,10 @@ export class MemoryStore implements Store, EntityStore {
     });
   }
 
-  private _readOne(
-    schema: EntitySchema,
-    uri: string,
-    bytesUnwrap: boolean,
-  ): unknown {
+  private _readOne(schema: EntitySchema, uri: string): unknown {
     if (isBytesSchema(schema)) {
       const bytes = this._readBytesAt(uri);
-      if (bytes === undefined) return undefined;
-      return bytesUnwrap ? bytes : { payload: bytes };
+      return bytes === undefined ? undefined : { payload: bytes };
     }
     return this.records.get(schema.name)?.get(uri);
   }
@@ -294,7 +229,7 @@ export class MemoryStore implements Store, EntityStore {
    * backend in this package; clients that want recursion call
    * `ls` per level.
    */
-  private _walkBytes(uri: string): Output<Uint8Array>[] {
+  private _walkBytes(uri: string): Output<EntityRecord>[] {
     const { node, parts, program, path } = resolveTarget(uri, this.storage);
     if (!node) return [];
     let current: StorageNode | undefined = node;
@@ -306,10 +241,10 @@ export class MemoryStore implements Store, EntityStore {
     const prefix = path.endsWith("/")
       ? `${program}${path}`
       : `${program}${path}/`;
-    const out: Output<Uint8Array>[] = [];
+    const out: Output<EntityRecord>[] = [];
     for (const [key, child] of current.children) {
       if (child.value !== undefined) {
-        out.push([`${prefix}${key}`, child.value]);
+        out.push([`${prefix}${key}`, { payload: child.value }]);
       }
     }
     return out;
@@ -321,7 +256,6 @@ export class MemoryStore implements Store, EntityStore {
   ): Output<EntityRecord>[] {
     const bucket = this.records.get(schema.name);
     if (!bucket) return [];
-    // Direct-children only — same shape as the bytes walk above.
     const prefix = uri.endsWith("/") ? uri : `${uri}/`;
     const out: Output<EntityRecord>[] = [];
     for (const [k, rec] of bucket) {
@@ -333,11 +267,7 @@ export class MemoryStore implements Store, EntityStore {
     return out;
   }
 
-  private _list(
-    schema: EntitySchema,
-    parsed: ParsedUrl,
-    bytesUnwrap: boolean,
-  ): unknown {
+  private _list(schema: EntitySchema, parsed: ParsedUrl): unknown {
     const { params } = parsed;
     if (params.pattern !== undefined) {
       throw new Error("MemoryStore: pattern filter not supported");
@@ -350,13 +280,9 @@ export class MemoryStore implements Store, EntityStore {
       throw new Error(`MemoryStore: unsupported format: ${format}`);
     }
 
-    let entries: Output<unknown>[];
-    if (isBytesSchema(schema)) {
-      const raw = this._walkBytes(parsed.uri);
-      entries = bytesUnwrap ? raw : raw.map(([u, b]) => [u, { payload: b }]);
-    } else {
-      entries = this._walkEntity(schema, parsed.uri);
-    }
+    let entries: Output<EntityRecord>[] = isBytesSchema(schema)
+      ? this._walkBytes(parsed.uri)
+      : this._walkEntity(schema, parsed.uri);
 
     if (params.sortBy === "uri") {
       const dir = params.sortOrder === "desc" ? -1 : 1;
@@ -379,22 +305,9 @@ export class MemoryStore implements Store, EntityStore {
     return this._walkEntity(schema, parsed.uri).length;
   }
 
-  // ── Delete (overloaded) ──────────────────────────────────────────
+  // ── Delete ───────────────────────────────────────────────────────
 
-  delete(uris: string[]): Promise<DeleteResult[]>;
-  delete(schema: EntitySchema, uris: string[]): Promise<DeleteResult[]>;
-  delete(
-    arg1: string[] | EntitySchema,
-    arg2?: string[],
-  ): Promise<DeleteResult[]> {
-    if (Array.isArray(arg1)) return this._deleteEntity(BYTES_ENTITY, arg1);
-    return this._deleteEntity(arg1, arg2!);
-  }
-
-  private _deleteEntity(
-    schema: EntitySchema,
-    uris: string[],
-  ): Promise<DeleteResult[]> {
+  delete(schema: EntitySchema, uris: string[]): Promise<DeleteResult[]> {
     const results: DeleteResult[] = [];
     for (const uri of uris) {
       try {
@@ -434,7 +347,7 @@ export class MemoryStore implements Store, EntityStore {
     }
   }
 
-  // ── Status ───────────────────────────────────────────────────────
+  // ── Status / capabilities ────────────────────────────────────────
 
   status(): Promise<StatusResult> {
     return Promise.resolve({

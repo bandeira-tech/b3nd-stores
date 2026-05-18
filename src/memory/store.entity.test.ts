@@ -1,10 +1,9 @@
 /**
- * MemoryStore — EntityStore-facing tests.
+ * MemoryStore — entity-specific tests.
  *
- * Covers the entity form of MemoryStore: `ensureEntity` reporting,
- * the BYTES_ENTITY redirect (byte form ⇄ entity form), and custom
- * entities. Strict-validation behavior (extra keys rejected) is
- * verified here too.
+ * The shared store suite covers the `BYTES_ENTITY` contract. This
+ * file adds entity-only coverage: `ensureEntity` reporting, custom
+ * entities side-by-side, strict validation.
  */
 
 /// <reference lib="deno.ns" />
@@ -49,39 +48,6 @@ Deno.test("MemoryStore.ensureEntity - flags unrecognised tags as unsupported", a
     "empty",
     "money",
   ]);
-});
-
-// ── Entity-form bytes redirect ────────────────────────────────────
-
-Deno.test("MemoryStore.write(BYTES_ENTITY, …) lands in the same place as Store.write(…)", async () => {
-  const store = new MemoryStore();
-  await store.write(BYTES_ENTITY, [{
-    uri: "mutable://app/config",
-    record: { payload: new TextEncoder().encode("dark") },
-  }]);
-  const [[, bytes]] = await store.read(["mutable://app/config"]);
-  assertEquals(new TextDecoder().decode(bytes as Uint8Array), "dark");
-});
-
-Deno.test("MemoryStore.read(BYTES_ENTITY, …) wraps the bytes as { payload }", async () => {
-  const store = new MemoryStore();
-  await store.write([{
-    uri: "mutable://app/x",
-    payload: new TextEncoder().encode("hi"),
-  }]);
-  const [[, rec]] = await store.read(BYTES_ENTITY, ["mutable://app/x"]);
-  assert(rec);
-  const payload = (rec as EntityRecord).payload;
-  assert(payload instanceof Uint8Array);
-  assertEquals(new TextDecoder().decode(payload), "hi");
-});
-
-Deno.test("MemoryStore.delete(BYTES_ENTITY, …) removes the bytes", async () => {
-  const store = new MemoryStore();
-  await store.write([{ uri: "mutable://app/x", payload: new Uint8Array([1]) }]);
-  await store.delete(BYTES_ENTITY, ["mutable://app/x"]);
-  const [[, rec]] = await store.read(BYTES_ENTITY, ["mutable://app/x"]);
-  assertEquals(rec, undefined);
 });
 
 // ── Custom-entity round-trip ──────────────────────────────────────
@@ -148,19 +114,20 @@ Deno.test("MemoryStore - hosts multiple entities side-by-side without interferen
   assertEquals(p, { title: "Hello" });
 });
 
-Deno.test("MemoryStore - byte face and custom-entity face do not interfere at the same URI", async () => {
+Deno.test("MemoryStore - BYTES_ENTITY and a custom entity at the same URI do not interfere", async () => {
   const store = new MemoryStore();
   await store.ensureEntity(userSchema);
-  await store.write([{
+  await store.write(BYTES_ENTITY, [{
     uri: "data://users/alice",
-    payload: new TextEncoder().encode("bytes-side"),
+    record: { payload: new TextEncoder().encode("bytes-side") },
   }]);
   await store.write(userSchema, [{
     uri: "data://users/alice",
     record: { name: "entity-side" },
   }]);
-  const [[, bytes]] = await store.read(["data://users/alice"]);
-  assertEquals(new TextDecoder().decode(bytes as Uint8Array), "bytes-side");
+  const [[, b]] = await store.read(BYTES_ENTITY, ["data://users/alice"]);
+  const bytesPayload = (b as EntityRecord).payload as Uint8Array;
+  assertEquals(new TextDecoder().decode(bytesPayload), "bytes-side");
   const [[, rec]] = await store.read(userSchema, ["data://users/alice"]);
   assertEquals(rec, { name: "entity-side" });
 });
@@ -206,13 +173,14 @@ Deno.test("MemoryStore.write(schema, …) auto-ensures on first use", async () =
   assertEquals(rec, { k: "v" });
 });
 
-// ── Status reflects both faces ────────────────────────────────────
+// ── Status ────────────────────────────────────────────────────────
 
 Deno.test("MemoryStore.status - lists byte programs and ensured entities", async () => {
   const store = new MemoryStore();
-  await store.write([{
+  await store.ensureEntity(BYTES_ENTITY);
+  await store.write(BYTES_ENTITY, [{
     uri: "mutable://app/x",
-    payload: new Uint8Array([1]),
+    record: { payload: new Uint8Array([1]) },
   }]);
   await store.ensureEntity(userSchema);
   const s = await store.status();

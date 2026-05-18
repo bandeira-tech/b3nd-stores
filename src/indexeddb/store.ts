@@ -16,13 +16,21 @@ import type {
   Output,
   StatusResult,
 } from "@bandeira-tech/b3nd-core/types";
+import {
+  bytesOnlyDelete,
+  bytesOnlyRead,
+  bytesOnlySupport,
+  bytesOnlyWrite,
+} from "../byte-entity-shim.ts";
+import type { EntityStore } from "../entity-store.ts";
+import type { EntityRecord, EntitySchema, EntitySupport } from "../entity.ts";
+
 import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
 import { dispatchRead } from "../dispatch.ts";
 import { storageFailure } from "../errors.ts";
 import { toBytes } from "../payload.ts";
 import { validateReadParams } from "../read.ts";
 import type {
-  Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
@@ -99,7 +107,7 @@ interface IDBFactory {
 // deno-lint-ignore no-explicit-any
 const idbKeyRange: IDBKeyRange | undefined = (globalThis as any).IDBKeyRange;
 
-export class IndexedDBStore implements Store {
+export class IndexedDBStore implements EntityStore {
   private readonly databaseName: string;
   private readonly storeName: string;
   private readonly version: number;
@@ -159,9 +167,50 @@ export class IndexedDBStore implements Store {
     return db.transaction([this.storeName], mode).objectStore(this.storeName);
   }
 
-  // ── Write ────────────────────────────────────────────────────────
+  // ── EntityStore surface ──────────────────────────────────────────
 
-  async write(entries: StoreEntry[]): Promise<StoreWriteResult[]> {
+  ensureEntity(schema: EntitySchema): Promise<EntitySupport> {
+    return Promise.resolve(bytesOnlySupport(schema));
+  }
+
+  write(
+    schema: EntitySchema,
+    entries: { uri: string; record: EntityRecord }[],
+  ): Promise<StoreWriteResult[]> {
+    return bytesOnlyWrite(
+      schema,
+      STORE_NAME,
+      entries,
+      (e) => this._writeBytes(e),
+    );
+  }
+
+  read<T = EntityRecord | undefined>(
+    schema: EntitySchema,
+    urls: string[],
+  ): Promise<Output<T>[]> {
+    return bytesOnlyRead<T>(
+      schema,
+      STORE_NAME,
+      urls,
+      (u) => this._readBytes(u),
+    );
+  }
+
+  delete(schema: EntitySchema, uris: string[]): Promise<DeleteResult[]> {
+    return bytesOnlyDelete(
+      schema,
+      STORE_NAME,
+      uris,
+      (u) => this._deleteBytes(u),
+    );
+  }
+
+  // ── Byte ops (BYTES_ENTITY routing) ──────────────────────────────
+
+  private async _writeBytes(
+    entries: StoreEntry[],
+  ): Promise<StoreWriteResult[]> {
     const results: StoreWriteResult[] = [];
 
     // Collect any streams to bytes BEFORE opening the IDB transaction.
@@ -218,10 +267,8 @@ export class IndexedDBStore implements Store {
     return results;
   }
 
-  // ── Read ─────────────────────────────────────────────────────────
-
-  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]> {
-    return dispatchRead<T>(urls, STORE_NAME, {
+  private _readBytes(urls: string[]): Promise<Output<unknown>[]> {
+    return dispatchRead<unknown>(urls, STORE_NAME, {
       read: (p) => this._readOne(p.uri),
       ls: (p) => this._ls(p),
       count: (p) => this._count(p),
@@ -347,9 +394,7 @@ export class IndexedDBStore implements Store {
     }
   }
 
-  // ── Delete ───────────────────────────────────────────────────────
-
-  async delete(uris: string[]): Promise<DeleteResult[]> {
+  private async _deleteBytes(uris: string[]): Promise<DeleteResult[]> {
     const results: DeleteResult[] = [];
 
     try {

@@ -1,15 +1,9 @@
 /// <reference lib="deno.ns" />
 
-import {
-  assert,
-  assertEquals,
-  assertInstanceOf,
-  assertThrows,
-} from "@std/assert";
+import { assert, assertEquals, assertInstanceOf } from "@std/assert";
 import { mapToBytes, passThroughRecord, SaveClient } from "./save-client.ts";
 import { MemoryStore } from "../memory/store.ts";
 import { BYTES_ENTITY, TYPE_TAGS } from "../entity.ts";
-import type { Store } from "../types.ts";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const dec = (b: unknown) =>
@@ -28,7 +22,7 @@ const postSchema = {
   fields: [{ name: "title", type: [TYPE_TAGS.STRING] }],
 };
 
-const bytesClient = (store: Store | MemoryStore = new MemoryStore()) =>
+const bytesClient = (store: MemoryStore = new MemoryStore()) =>
   new SaveClient(mapToBytes, BYTES_ENTITY, store);
 
 const usersClient = (store: MemoryStore = new MemoryStore()) =>
@@ -93,29 +87,6 @@ Deno.test("SaveClient - bytes: observe emits on receive and delete", async () =>
   ac.abort();
   await reader.catch(() => {});
   assert(events.length >= 1);
-});
-
-Deno.test("SaveClient - observe works on a bare byte Store (no entity face)", async () => {
-  const bareStore: Store = {
-    write: (entries) =>
-      Promise.resolve(entries.map(() => ({ success: true as const }))),
-    read: () => Promise.resolve([]),
-    delete: (uris) =>
-      Promise.resolve(uris.map(() => ({ success: true as const }))),
-    status: () => Promise.resolve({ status: "healthy" as const }),
-  };
-  const client = bytesClient(bareStore);
-  const ac = new AbortController();
-  const observed: string[] = [];
-  const done = (async () => {
-    for await (const ev of client.observe(["mutable://x/:k"], ac.signal)) {
-      observed.push(ev[1][0]);
-      ac.abort();
-    }
-  })();
-  await client.receive([["mutable://x/a", enc("42")]]);
-  await done;
-  assertEquals(observed, ["mutable://x/a"]);
 });
 
 Deno.test("SaveClient - status delegates to the store", async () => {
@@ -258,20 +229,4 @@ Deno.test("SaveClient.mapper - encodes structured wire payloads into BYTES_ENTIT
   await client.receive([["mutable://greet", { msg: "hello" }]]);
   const [[, bytes]] = await client.read(["mutable://greet"]);
   assertEquals(dec(bytes), JSON.stringify({ msg: "hello" }));
-});
-
-// ── byte-only store enforcement ─────────────────────────────────────
-
-Deno.test("SaveClient - byte-only store rejects non-BYTES_ENTITY target", () => {
-  const bareStore: Store = {
-    write: () => Promise.resolve([]),
-    read: () => Promise.resolve([]),
-    delete: () => Promise.resolve([]),
-    status: () => Promise.resolve({ status: "healthy" as const }),
-  };
-  assertThrows(
-    () => new SaveClient(passThroughRecord, userSchema, bareStore),
-    Error,
-    "EntityStore",
-  );
 });

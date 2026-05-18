@@ -1,10 +1,15 @@
 /**
- * PostgresStore — PostgreSQL implementation of Store.
+ * PostgresStore — PostgreSQL implementation of EntityStore.
  *
  * Pure mechanical byte storage with no protocol awareness. Uses an
  * injected SqlExecutor so the package does not depend on a specific
  * Postgres driver. The payload column is BYTEA; the store does not
  * inspect or transform its contents.
+ *
+ * Currently routes `BYTES_ENTITY` only — other schemas come back as
+ * `EntitySupport` with everything unsupported and produce per-entry
+ * failures on write/delete. Native table-per-entity layouts arrive
+ * in a follow-up PR.
  *
  * `fn=ls` / `fn=count` push down to SQL: the shallow-direct-leaves
  * contract (`uri LIKE prefix% AND uri NOT LIKE prefix%/%`) is
@@ -17,12 +22,19 @@ import type {
   StatusResult,
 } from "@bandeira-tech/b3nd-core/types";
 import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
+import {
+  bytesOnlyDelete,
+  bytesOnlyRead,
+  bytesOnlySupport,
+  bytesOnlyWrite,
+} from "../byte-entity-shim.ts";
 import { dispatchRead } from "../dispatch.ts";
 import { storageFailure } from "../errors.ts";
 import { toBytes } from "../payload.ts";
 import { validateReadParams } from "../read.ts";
+import type { EntityStore } from "../entity-store.ts";
+import type { EntityRecord, EntitySchema, EntitySupport } from "../entity.ts";
 import type {
-  Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
@@ -51,7 +63,7 @@ function rowToBytes(value: unknown): Uint8Array {
   );
 }
 
-export class PostgresStore implements Store {
+export class PostgresStore implements EntityStore {
   private readonly tableName: string;
   private readonly executor: SqlExecutor;
 
@@ -63,9 +75,50 @@ export class PostgresStore implements Store {
     this.executor = executor;
   }
 
-  // ── Write ────────────────────────────────────────────────────────
+  // ── EntityStore surface ──────────────────────────────────────────
 
-  async write(entries: StoreEntry[]): Promise<StoreWriteResult[]> {
+  ensureEntity(schema: EntitySchema): Promise<EntitySupport> {
+    return Promise.resolve(bytesOnlySupport(schema));
+  }
+
+  write(
+    schema: EntitySchema,
+    entries: { uri: string; record: EntityRecord }[],
+  ): Promise<StoreWriteResult[]> {
+    return bytesOnlyWrite(
+      schema,
+      STORE_NAME,
+      entries,
+      (e) => this._writeBytes(e),
+    );
+  }
+
+  read<T = EntityRecord | undefined>(
+    schema: EntitySchema,
+    urls: string[],
+  ): Promise<Output<T>[]> {
+    return bytesOnlyRead<T>(
+      schema,
+      STORE_NAME,
+      urls,
+      (u) => this._readBytes(u),
+    );
+  }
+
+  delete(schema: EntitySchema, uris: string[]): Promise<DeleteResult[]> {
+    return bytesOnlyDelete(
+      schema,
+      STORE_NAME,
+      uris,
+      (u) => this._deleteBytes(u),
+    );
+  }
+
+  // ── Byte ops (BYTES_ENTITY routing) ──────────────────────────────
+
+  private async _writeBytes(
+    entries: StoreEntry[],
+  ): Promise<StoreWriteResult[]> {
     if (entries.length === 0) return [];
 
     // `capabilities.atomicBatch` is true: the whole batch commits or
@@ -97,10 +150,8 @@ export class PostgresStore implements Store {
     }
   }
 
-  // ── Read ─────────────────────────────────────────────────────────
-
-  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]> {
-    return dispatchRead<T>(urls, STORE_NAME, {
+  private _readBytes(urls: string[]): Promise<Output<unknown>[]> {
+    return dispatchRead<unknown>(urls, STORE_NAME, {
       read: (p) => this._readOne(p.uri),
       ls: (p) => this._ls(p),
       count: (p) => this._count(p),
@@ -159,9 +210,7 @@ export class PostgresStore implements Store {
     return row?.n ?? 0;
   }
 
-  // ── Delete ───────────────────────────────────────────────────────
-
-  async delete(uris: string[]): Promise<DeleteResult[]> {
+  private async _deleteBytes(uris: string[]): Promise<DeleteResult[]> {
     if (uris.length === 0) return [];
 
     // Atomic batch: every uri either deletes together or not at all.

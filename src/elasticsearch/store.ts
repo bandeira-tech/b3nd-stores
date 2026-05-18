@@ -18,6 +18,15 @@ import type {
   Output,
   StatusResult,
 } from "@bandeira-tech/b3nd-core/types";
+import {
+  bytesOnlyDelete,
+  bytesOnlyRead,
+  bytesOnlySupport,
+  bytesOnlyWrite,
+} from "../byte-entity-shim.ts";
+import type { EntityStore } from "../entity-store.ts";
+import type { EntityRecord, EntitySchema, EntitySupport } from "../entity.ts";
+
 import { decodeBase64, encodeBase64 } from "@bandeira-tech/b3nd-core";
 import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
 import { dispatchRead } from "../dispatch.ts";
@@ -25,7 +34,6 @@ import { storageFailure } from "../errors.ts";
 import { toBytes } from "../payload.ts";
 import { validateReadParams } from "../read.ts";
 import type {
-  Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
@@ -70,7 +78,7 @@ function indexAndDocIdToUri(
   return `${protocol}://${hostname}/${docId}`;
 }
 
-export class ElasticsearchStore implements Store {
+export class ElasticsearchStore implements EntityStore {
   private readonly indexPrefix: string;
   private readonly executor: ElasticsearchExecutor;
 
@@ -82,9 +90,50 @@ export class ElasticsearchStore implements Store {
     this.executor = executor;
   }
 
-  // ── Write ────────────────────────────────────────────────────────
+  // ── EntityStore surface ──────────────────────────────────────────
 
-  async write(entries: StoreEntry[]): Promise<StoreWriteResult[]> {
+  ensureEntity(schema: EntitySchema): Promise<EntitySupport> {
+    return Promise.resolve(bytesOnlySupport(schema));
+  }
+
+  write(
+    schema: EntitySchema,
+    entries: { uri: string; record: EntityRecord }[],
+  ): Promise<StoreWriteResult[]> {
+    return bytesOnlyWrite(
+      schema,
+      STORE_NAME,
+      entries,
+      (e) => this._writeBytes(e),
+    );
+  }
+
+  read<T = EntityRecord | undefined>(
+    schema: EntitySchema,
+    urls: string[],
+  ): Promise<Output<T>[]> {
+    return bytesOnlyRead<T>(
+      schema,
+      STORE_NAME,
+      urls,
+      (u) => this._readBytes(u),
+    );
+  }
+
+  delete(schema: EntitySchema, uris: string[]): Promise<DeleteResult[]> {
+    return bytesOnlyDelete(
+      schema,
+      STORE_NAME,
+      uris,
+      (u) => this._deleteBytes(u),
+    );
+  }
+
+  // ── Byte ops (BYTES_ENTITY routing) ──────────────────────────────
+
+  private async _writeBytes(
+    entries: StoreEntry[],
+  ): Promise<StoreWriteResult[]> {
     const results: StoreWriteResult[] = [];
 
     for (const entry of entries) {
@@ -116,10 +165,8 @@ export class ElasticsearchStore implements Store {
     return results;
   }
 
-  // ── Read ─────────────────────────────────────────────────────────
-
-  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]> {
-    return dispatchRead<T>(urls, STORE_NAME, {
+  private _readBytes(urls: string[]): Promise<Output<unknown>[]> {
+    return dispatchRead<unknown>(urls, STORE_NAME, {
       read: (p) => this._readOne(p.uri),
       ls: (p) => this._ls(p),
       count: (p) => this._count(p),
@@ -185,9 +232,7 @@ export class ElasticsearchStore implements Store {
     return await this.executor.count(index, { query: this._leafQuery(docId) });
   }
 
-  // ── Delete ───────────────────────────────────────────────────────
-
-  async delete(uris: string[]): Promise<DeleteResult[]> {
+  private async _deleteBytes(uris: string[]): Promise<DeleteResult[]> {
     const results: DeleteResult[] = [];
 
     for (const uri of uris) {
