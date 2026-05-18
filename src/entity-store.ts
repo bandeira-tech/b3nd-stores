@@ -33,7 +33,7 @@ import type {
   StatusResult,
 } from "@bandeira-tech/b3nd-core/types";
 import type { EntityRecord, EntitySchema, EntitySupport } from "./entity.ts";
-import type { StoreWriteResult } from "./types.ts";
+import type { StoreCapabilities, StoreWriteResult } from "./types.ts";
 
 export interface EntityStore {
   /**
@@ -73,4 +73,11 @@ export interface EntityStore {
 
   /** Health + capabilities, aggregated across all hosted entities. */
   status(): Promise<StatusResult>;
+
+  /**
+   * Optional capability reporting. Backends advertise what they can
+   * do so clients can make informed decisions (e.g. wrap deletes +
+   * writes in a transaction when `atomicBatch` is true).
+   */
+  capabilities?(): StoreCapabilities;
 }

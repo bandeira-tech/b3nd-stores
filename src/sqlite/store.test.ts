@@ -7,6 +7,7 @@
 
 import { runSharedStoreSuite } from "../../tests/runners/shared-store-suite.ts";
 import { SqliteStore } from "./store.ts";
+import { BYTES_ENTITY } from "../entity.ts";
 import type { SqliteExecutor, SqliteExecutorResult } from "./mod.ts";
 
 function createMockSqliteExecutor(): SqliteExecutor {
@@ -110,10 +111,10 @@ Deno.test("SqliteStore - atomicBatch: write rolls back on per-entry failure", as
     transaction: <T>(fn: (tx: SqliteExecutor) => T): T => fn(executor),
   };
   const store = new SqliteStore("test", executor);
-  const results = await store.write([
-    { uri: "store://a", payload: new Uint8Array([1]) },
-    { uri: "store://b", payload: new Uint8Array([2]) },
-    { uri: "store://c", payload: new Uint8Array([3]) },
+  const results = await store.write(BYTES_ENTITY, [
+    { uri: "store://a", record: { payload: new Uint8Array([1]) } },
+    { uri: "store://b", record: { payload: new Uint8Array([2]) } },
+    { uri: "store://c", record: { payload: new Uint8Array([3]) } },
   ]);
   assertEquals(results.length, 3);
   assertEquals(results.every((r) => !r.success), true);
@@ -122,6 +123,6 @@ Deno.test("SqliteStore - atomicBatch: write rolls back on per-entry failure", as
 
 Deno.test("SqliteStore - empty batch returns empty results", async () => {
   const store = new SqliteStore("test", createMockSqliteExecutor());
-  assertEquals(await store.write([]), []);
-  assertEquals(await store.delete([]), []);
+  assertEquals(await store.write(BYTES_ENTITY, []), []);
+  assertEquals(await store.delete(BYTES_ENTITY, []), []);
 });

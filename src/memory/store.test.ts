@@ -11,6 +11,7 @@
 import { assertEquals } from "@std/assert";
 import { runSharedStoreSuite } from "../../tests/runners/shared-store-suite.ts";
 import { MemoryStore } from "./store.ts";
+import { BYTES_ENTITY } from "../entity.ts";
 
 runSharedStoreSuite("MemoryStore", {
   create: () => new MemoryStore(),
@@ -22,12 +23,13 @@ Deno.test("MemoryStore - capabilities shape", () => {
 });
 
 Deno.test("MemoryStore - per-entry failure carries structured error with uri", async () => {
-  // A malformed URI trips URL.parse and throws inside _writeOne; the
-  // other entries still succeed (atomicBatch: false).
+  // A malformed URI trips URL.parse and throws inside the bytes write
+  // path; the other entries still succeed (atomicBatch: false).
   const store = new MemoryStore();
-  const results = await store.write([
-    { uri: "store://app/good", payload: new Uint8Array([1]) },
-    { uri: "not-a-url", payload: new Uint8Array([2]) },
+  await store.ensureEntity(BYTES_ENTITY);
+  const results = await store.write(BYTES_ENTITY, [
+    { uri: "store://app/good", record: { payload: new Uint8Array([1]) } },
+    { uri: "not-a-url", record: { payload: new Uint8Array([2]) } },
   ]);
   assertEquals(results[0].success, true);
   assertEquals(results[1].success, false);

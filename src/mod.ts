@@ -8,22 +8,16 @@
  * `@bandeira-tech/b3nd-save/postgres`).
  *
  * Namespaces:
- *   clients       — Store → ProtocolInterfaceNode adapters
+ *   clients       — EntityStore → ProtocolInterfaceNode adapters
  *   memory        — In-memory reference backend
  *   postgres, mongo, sqlite, fs, ipfs, s3, elasticsearch,
- *   localstorage, indexeddb — Backend implementations
+ *   localstorage, indexeddb — EntityStore backend implementations
  *
- * Store types (`Store`, `StoreEntry`, ...) are re-exported from the
- * root. `Store` is local to this package — clients are the bridge to
- * the rest of b3nd.
+ * The entity surface (`EntityStore`, `EntitySchema`, `BYTES_ENTITY`,
+ * `TYPE_TAGS`, …) is re-exported from the root for convenience.
  */
 
-export type {
-  Store,
-  StoreCapabilities,
-  StoreEntry,
-  StoreWriteResult,
-} from "./types.ts";
+export type { StoreCapabilities, StoreWriteResult } from "./types.ts";
 
 export type {
   EntityField,

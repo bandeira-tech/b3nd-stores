@@ -7,6 +7,7 @@
 
 import { runSharedStoreSuite } from "../../tests/runners/shared-store-suite.ts";
 import { PostgresStore } from "./store.ts";
+import { BYTES_ENTITY } from "../entity.ts";
 import type { SqlExecutor, SqlExecutorResult } from "./mod.ts";
 
 /**
@@ -134,10 +135,10 @@ Deno.test("PostgresStore - atomicBatch: write rolls back on per-entry failure", 
     },
   };
   const store = new PostgresStore("test", executor);
-  const results = await store.write([
-    { uri: "store://a", payload: new Uint8Array([1]) },
-    { uri: "store://b", payload: new Uint8Array([2]) },
-    { uri: "store://c", payload: new Uint8Array([3]) },
+  const results = await store.write(BYTES_ENTITY, [
+    { uri: "store://a", record: { payload: new Uint8Array([1]) } },
+    { uri: "store://b", record: { payload: new Uint8Array([2]) } },
+    { uri: "store://c", record: { payload: new Uint8Array([3]) } },
   ]);
   assertEquals(results.length, 3);
   // All entries fail with the same error — that's the atomic contract.
@@ -155,6 +156,6 @@ Deno.test("PostgresStore - atomicBatch: write rolls back on per-entry failure", 
 
 Deno.test("PostgresStore - empty batch returns empty results", async () => {
   const store = new PostgresStore("test", createMockSqlExecutor());
-  assertEquals(await store.write([]), []);
-  assertEquals(await store.delete([]), []);
+  assertEquals(await store.write(BYTES_ENTITY, []), []);
+  assertEquals(await store.delete(BYTES_ENTITY, []), []);
 });

@@ -1,13 +1,11 @@
 /**
  * Entity schema types.
  *
- * `b3nd-save` ships two store interfaces:
- *
- * - `Store` — byte-only. Every backend in this package implements it.
- * - `EntityStore` (see `./entity-store.ts`) — schema-aware: every
- *   operation takes the `EntitySchema` it targets, so a single store
- *   instance can host many entities side-by-side. Schema is per-call,
- *   not pinned at construction.
+ * `b3nd-save` ships one store interface: `EntityStore` (see
+ * `./entity-store.ts`) — schema-aware: every operation takes the
+ * `EntitySchema` it targets, so a single store instance can host many
+ * entities side-by-side. Schema is per-call, not pinned at
+ * construction.
  *
  * Entities are a client-layer concern. Clients map their wire payload
  * (`Output<T>`) into `EntityRecord`s and call the store with an
@@ -109,10 +107,8 @@ export interface EntitySupport {
  * Canonical entity for raw-byte storage.
  *
  * `EntityStore.write(BYTES_ENTITY, [{ uri, record: { payload: bytes }}])`
- * is the canonical entity-shaped equivalent of `Store.write([{ uri,
- * payload: bytes }])`. `SaveClient` defaults its target to this
- * schema, so byte-shaped wires plug into an `EntityStore` (or a
- * legacy byte `Store`) with no extra configuration.
+ * is how opaque bytes go into the store; pair it with `mapToBytes`
+ * from `./clients` to expose a bytes-on-the-wire `ProtocolInterfaceNode`.
  */
 export const BYTES_ENTITY: EntitySchema = {
   name: "bytes",

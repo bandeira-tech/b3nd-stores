@@ -1,9 +1,5 @@
 /**
- * SaveClient — unified ProtocolInterfaceNode adapter over a save backend.
- *
- * One client. One shape. Backed by either an {@link EntityStore} or a
- * legacy byte {@link Store}, picked at construction by duck-typing on
- * `ensureEntity`.
+ * SaveClient — unified ProtocolInterfaceNode adapter over an EntityStore.
  *
  * Construction shape:
  *
@@ -20,8 +16,8 @@
  *   the common cases.
  * - **entity** — the {@link EntitySchema} this client routes. Use
  *   {@link BYTES_ENTITY} for opaque-bytes wires.
- * - **store** — an {@link EntityStore}, or a legacy byte {@link Store}
- *   if `entity` is `BYTES_ENTITY`.
+ * - **store** — any {@link EntityStore}. Every backend in this
+ *   package implements it.
  *
  * Wire shape: a `receive` message is `Output<TIn | null>` —
  * `[uri, payload]` where `payload === null` is the delete-by-convention.
@@ -30,8 +26,7 @@
  *
  * A `SaveClient` is a one-shot, isolated thing: each one routes one
  * entity, and routing a different entity means constructing a
- * different client. A byte-only backing store accepts only
- * `BYTES_ENTITY` — passing any other entity throws.
+ * different client.
  */
 
 import type {
@@ -48,9 +43,7 @@ import {
   type EntitySchema,
   type EntitySupport,
 } from "../entity.ts";
-import type { Store, StorePayload } from "../types.ts";
-
-type SaveStore = EntityStore | Store;
+import type { StorePayload } from "../types.ts";
 
 /**
  * Freeform projection from wire payload → `EntityRecord` for the
@@ -79,10 +72,6 @@ export const mapToBytes: SaveMapper<StorePayload> = (_uri, payload) => ({
  */
 export const passThroughRecord: SaveMapper<EntityRecord> = (_uri, payload) =>
   payload;
-
-function isEntityStore(store: SaveStore): store is EntityStore {
-  return typeof (store as EntityStore).ensureEntity === "function";
-}
 
 /**
  * Unwrap `BYTES_ENTITY` read results back to bytes-on-the-wire.
@@ -119,38 +108,28 @@ export class SaveClient<TIn = unknown> extends ObserveEmitter
   implements ProtocolInterfaceNode {
   readonly mapper: SaveMapper<TIn>;
   readonly target: EntitySchema;
-  readonly store: SaveStore;
-  private readonly _isEntity: boolean;
-  private _ensurePromise: Promise<EntitySupport | undefined> | null = null;
+  readonly store: EntityStore;
+  private _ensurePromise: Promise<EntitySupport> | null = null;
 
   constructor(
     mapper: SaveMapper<TIn>,
     target: EntitySchema,
-    store: SaveStore,
+    store: EntityStore,
   ) {
     super();
     this.mapper = mapper;
     this.target = target;
     this.store = store;
-    this._isEntity = isEntityStore(store);
-    if (!this._isEntity && target.name !== BYTES_ENTITY.name) {
-      throw new Error(
-        `SaveClient: backing store does not implement EntityStore; ` +
-          `target must be BYTES_ENTITY (got '${target.name}')`,
-      );
-    }
   }
 
   /**
-   * Eagerly provision the target on an `EntityStore`. Returns the
-   * {@link EntitySupport} report. Byte-only stores return `undefined`
-   * — they don't carry per-entity metadata.
+   * Eagerly provision the target on the backing store. Returns the
+   * {@link EntitySupport} report so callers can see which fields the
+   * medium accepted.
    */
-  init(): Promise<EntitySupport | undefined> {
+  init(): Promise<EntitySupport> {
     if (this._ensurePromise) return this._ensurePromise;
-    this._ensurePromise = this._isEntity
-      ? (this.store as EntityStore).ensureEntity(this.target)
-      : Promise.resolve(undefined);
+    this._ensurePromise = this.store.ensureEntity(this.target);
     return this._ensurePromise;
   }
 
@@ -191,18 +170,10 @@ export class SaveClient<TIn = unknown> extends ObserveEmitter
     }
 
     if (writes.length > 0) {
-      const writeResults = this._isEntity
-        ? await (this.store as EntityStore).write(
-          target,
-          writes.map(({ uri, record }) => ({ uri, record })),
-        )
-        : await (this.store as Store).write(
-          writes.map(({ uri, record }) => ({
-            uri,
-            payload: record.payload as StorePayload,
-          })),
-        );
-
+      const writeResults = await this.store.write(
+        target,
+        writes.map(({ uri, record }) => ({ uri, record })),
+      );
       for (let j = 0; j < writeResults.length; j++) {
         const w = writes[j];
         const r = writeResults[j];
@@ -212,13 +183,10 @@ export class SaveClient<TIn = unknown> extends ObserveEmitter
     }
 
     if (deletes.length > 0) {
-      const delResults = this._isEntity
-        ? await (this.store as EntityStore).delete(
-          target,
-          deletes.map((d) => d.uri),
-        )
-        : await (this.store as Store).delete(deletes.map((d) => d.uri));
-
+      const delResults = await this.store.delete(
+        target,
+        deletes.map((d) => d.uri),
+      );
       const deletedUris: string[] = [];
       for (let j = 0; j < delResults.length; j++) {
         const d = deletes[j];
@@ -239,16 +207,9 @@ export class SaveClient<TIn = unknown> extends ObserveEmitter
     const target = this.target;
     const isBytes = target.name === BYTES_ENTITY.name;
 
-    if (!this._isEntity) {
-      return (this.store as Store).read<T>(urls);
-    }
-
-    const rows = await (this.store as EntityStore).read<
-      EntityRecord | undefined
-    >(target, urls);
+    const rows = await this.store.read<EntityRecord | undefined>(target, urls);
 
     if (!isBytes) return rows as unknown as Output<T>[];
-
     return rows.map(([uri, payload]) => [uri, unwrapBytes(payload) as T]);
   }
 

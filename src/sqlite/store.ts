@@ -15,13 +15,21 @@ import type {
   Output,
   StatusResult,
 } from "@bandeira-tech/b3nd-core/types";
+import {
+  bytesOnlyDelete,
+  bytesOnlyRead,
+  bytesOnlySupport,
+  bytesOnlyWrite,
+} from "../byte-entity-shim.ts";
+import type { EntityStore } from "../entity-store.ts";
+import type { EntityRecord, EntitySchema, EntitySupport } from "../entity.ts";
+
 import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
 import { dispatchRead } from "../dispatch.ts";
 import { storageFailure } from "../errors.ts";
 import { toBytes } from "../payload.ts";
 import { validateReadParams } from "../read.ts";
 import type {
-  Store,
   StoreCapabilities,
   StoreEntry,
   StoreWriteResult,
@@ -37,7 +45,7 @@ function rowToBytes(value: unknown): Uint8Array {
   throw new Error(`SqliteStore: unexpected payload type ${typeof value}`);
 }
 
-export class SqliteStore implements Store {
+export class SqliteStore implements EntityStore {
   private readonly tableName: string;
   private readonly executor: SqliteExecutor;
 
@@ -49,9 +57,50 @@ export class SqliteStore implements Store {
     this.executor = executor;
   }
 
-  // ── Write ────────────────────────────────────────────────────────
+  // ── EntityStore surface ──────────────────────────────────────────
 
-  async write(entries: StoreEntry[]): Promise<StoreWriteResult[]> {
+  ensureEntity(schema: EntitySchema): Promise<EntitySupport> {
+    return Promise.resolve(bytesOnlySupport(schema));
+  }
+
+  write(
+    schema: EntitySchema,
+    entries: { uri: string; record: EntityRecord }[],
+  ): Promise<StoreWriteResult[]> {
+    return bytesOnlyWrite(
+      schema,
+      STORE_NAME,
+      entries,
+      (e) => this._writeBytes(e),
+    );
+  }
+
+  read<T = EntityRecord | undefined>(
+    schema: EntitySchema,
+    urls: string[],
+  ): Promise<Output<T>[]> {
+    return bytesOnlyRead<T>(
+      schema,
+      STORE_NAME,
+      urls,
+      (u) => this._readBytes(u),
+    );
+  }
+
+  delete(schema: EntitySchema, uris: string[]): Promise<DeleteResult[]> {
+    return bytesOnlyDelete(
+      schema,
+      STORE_NAME,
+      uris,
+      (u) => this._deleteBytes(u),
+    );
+  }
+
+  // ── Byte ops (BYTES_ENTITY routing) ──────────────────────────────
+
+  private async _writeBytes(
+    entries: StoreEntry[],
+  ): Promise<StoreWriteResult[]> {
     if (entries.length === 0) return [];
 
     // Collect streams up front: the executor is synchronous (BLOB
@@ -86,10 +135,8 @@ export class SqliteStore implements Store {
     }
   }
 
-  // ── Read ─────────────────────────────────────────────────────────
-
-  read<T = Uint8Array>(urls: string[]): Promise<Output<T>[]> {
-    return dispatchRead<T>(urls, STORE_NAME, {
+  private _readBytes(urls: string[]): Promise<Output<unknown>[]> {
+    return dispatchRead<unknown>(urls, STORE_NAME, {
       read: (p) => this._readOne(p.uri),
       ls: (p) => this._ls(p),
       count: (p) => this._count(p),
@@ -144,9 +191,7 @@ export class SqliteStore implements Store {
     return row?.n ?? 0;
   }
 
-  // ── Delete ───────────────────────────────────────────────────────
-
-  delete(uris: string[]): Promise<DeleteResult[]> {
+  private _deleteBytes(uris: string[]): Promise<DeleteResult[]> {
     if (uris.length === 0) return Promise.resolve([]);
 
     // Atomic batch: every uri either deletes together or not at all.

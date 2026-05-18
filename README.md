@@ -149,9 +149,9 @@ read.
 
 ## Client
 
-`@bandeira-tech/b3nd-save/clients` exports **`SaveClient`** — the adapter from a
-save backend (`EntityStore` or legacy byte `Store`) to `ProtocolInterfaceNode`.
-Three required args, read as a sentence:
+`@bandeira-tech/b3nd-save/clients` exports **`SaveClient`** — the adapter from
+an `EntityStore` to `ProtocolInterfaceNode`. Three required args, read as a
+sentence:
 
 ```ts
 new SaveClient(mapper, entity, store);
@@ -163,8 +163,9 @@ new SaveClient(mapper, entity, store);
   proceeds.
 - **entity** — the `EntitySchema` this client routes. Use `BYTES_ENTITY` for
   opaque bytes.
-- **store** — an `EntityStore`, or a legacy byte `Store` if `entity` is
-  `BYTES_ENTITY` (any other entity throws on a byte-only store).
+- **store** — any `EntityStore`. Every backend in the package implements it.
+  Most route `BYTES_ENTITY` natively today; native layouts for custom entities
+  arrive per-backend in follow-up PRs.
 
 Two mappers ship with the package:
 
