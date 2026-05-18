@@ -11,7 +11,7 @@
 
 import { assertEquals } from "@std/assert";
 import { MemoryStore } from "../src/memory/store.ts";
-import { SimpleClient } from "../src/clients/simple-client.ts";
+import { SaveClient } from "../src/clients/save-client.ts";
 import { Rig } from "@bandeira-tech/b3nd-core/rig";
 import { connection } from "@bandeira-tech/b3nd-core/rig";
 import type {
@@ -23,7 +23,7 @@ import type { Policy } from "@bandeira-tech/b3nd-core/network";
 import { JsonClient } from "./helpers/json-client.ts";
 
 function mem(): ProtocolInterfaceNode {
-  return new JsonClient(new SimpleClient(new MemoryStore()));
+  return new JsonClient(new SaveClient(new MemoryStore()));
 }
 
 /**

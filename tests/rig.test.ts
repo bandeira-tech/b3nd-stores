@@ -3,7 +3,7 @@ import { Identity } from "@bandeira-tech/b3nd-core/identity";
 import { Rig } from "@bandeira-tech/b3nd-core/rig";
 import type { Program } from "@bandeira-tech/b3nd-core/types";
 import { MemoryStore } from "../src/memory/store.ts";
-import { DataStoreClient } from "../src/clients/data-store-client.ts";
+import { SaveClient } from "../src/clients/save-client.ts";
 import { connection } from "@bandeira-tech/b3nd-core/rig";
 import { JsonClient } from "./helpers/json-client.ts";
 
@@ -18,7 +18,7 @@ async function readData<T>(rig: Rig, url: string): Promise<T | null> {
  * through the bytes-only Save layer underneath.
  */
 function memClient() {
-  return new JsonClient(new DataStoreClient(new MemoryStore()));
+  return new JsonClient(new SaveClient(new MemoryStore()));
 }
 
 /**

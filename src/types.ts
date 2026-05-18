@@ -1,9 +1,9 @@
 /**
  * Local Store types for b3nd-save.
  *
- * The `Store` abstraction is internal to this package. Clients
- * (`SimpleClient`, `DataStoreClient`) wrap a `Store` and expose a
- * `ProtocolInterfaceNode` to the rest of b3nd — outside the clients,
+ * The `Store` abstraction is internal to this package. `SaveClient`
+ * wraps a `Store` (or `EntityStore`) and exposes a
+ * `ProtocolInterfaceNode` to the rest of b3nd — outside the client,
  * nothing else in the framework sees a `Store`.
  *
  * Stores are opaque byte storage: payloads are bytes in, bytes out.

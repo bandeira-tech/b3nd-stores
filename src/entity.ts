@@ -33,11 +33,11 @@
  *
  * The store is strict: anything that doesn't fit the schema becomes
  * an error result so the rig wiring can be fixed. Coercion and field
- * projection are the client's job — `ByteStorageClient` builds a
- * `{ payload: bytes }` record from incoming bytes; `EntityClient`
- * passes records through verbatim. If a record arrives with extra or
- * mistyped fields, the store reports the error rather than silently
- * dropping data.
+ * projection are the client's job — `SaveClient` in its default
+ * `BYTES_ENTITY` mode builds a `{ payload: bytes }` record from
+ * incoming bytes; in record mode it passes records through verbatim.
+ * If a record arrives with extra or mistyped fields, the store
+ * reports the error rather than silently dropping data.
  */
 
 /**
@@ -110,8 +110,9 @@ export interface EntitySupport {
  *
  * `EntityStore.write(BYTES_ENTITY, [{ uri, record: { payload: bytes }}])`
  * is the canonical entity-shaped equivalent of `Store.write([{ uri,
- * payload: bytes }])`. `ByteStorageClient` is built around this
- * schema and is what byte-shaped wires plug into on an `EntityStore`.
+ * payload: bytes }])`. `SaveClient` defaults its target to this
+ * schema, so byte-shaped wires plug into an `EntityStore` (or a
+ * legacy byte `Store`) with no extra configuration.
  */
 export const BYTES_ENTITY: EntitySchema = {
   name: "bytes",

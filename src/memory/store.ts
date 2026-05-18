@@ -5,14 +5,14 @@
  * Two faces, one storage:
  *
  * - `Store` (byte form): `write(entries)` / `read(urls)` /
- *   `delete(uris)` — what every backend in this package already
- *   exposes. Used by `SimpleClient` / `DataStoreClient` and by the
- *   shared store suite.
+ *   `delete(uris)` — what every byte-only backend in this package
+ *   exposes. Used by the shared store suite and by `SaveClient` when
+ *   it backs onto a byte-only store.
  * - `EntityStore` (entity form): `ensureEntity(schema)` and
  *   `write(schema, entries)` / `read(schema, urls)` /
- *   `delete(schema, uris)` — used by `ByteStorageClient` and
- *   `EntityClient`. Schema is per-call so one MemoryStore instance
- *   hosts many entities.
+ *   `delete(schema, uris)`. Schema is per-call, so one MemoryStore
+ *   instance hosts many entities. `SaveClient` routes through this
+ *   face when given a target schema (or its `BYTES_ENTITY` default).
  *
  * The byte form **redirects to the entity form with `BYTES_ENTITY`**
  * — there is one internal path, not two. Writes/reads that arrive
@@ -237,7 +237,9 @@ export class MemoryStore implements Store, EntityStore {
     arg1: string[] | EntitySchema,
     arg2?: string[],
   ): Promise<Output<T>[]> {
-    if (Array.isArray(arg1)) return this._readEntity<T>(BYTES_ENTITY, arg1, true);
+    if (Array.isArray(arg1)) {
+      return this._readEntity<T>(BYTES_ENTITY, arg1, true);
+    }
     return this._readEntity<T>(arg1, arg2!, false);
   }
 
@@ -351,9 +353,7 @@ export class MemoryStore implements Store, EntityStore {
     let entries: Output<unknown>[];
     if (isBytesSchema(schema)) {
       const raw = this._walkBytes(parsed.uri);
-      entries = bytesUnwrap
-        ? raw
-        : raw.map(([u, b]) => [u, { payload: b }]);
+      entries = bytesUnwrap ? raw : raw.map(([u, b]) => [u, { payload: b }]);
     } else {
       entries = this._walkEntity(schema, parsed.uri);
     }

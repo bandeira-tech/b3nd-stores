@@ -18,15 +18,20 @@
  * Writes/reads/deletes are strict. A record that does not match the
  * schema produces a `StoreWriteResult.error` (or `DeleteResult.error`
  * for delete-time failures). The store never silently drops or
- * coerces — coercion is the client's job (see `ByteStorageClient`,
- * which projects raw bytes into a `BYTES_ENTITY` record).
+ * coerces — coercion is the client's job (see `SaveClient`, which
+ * projects raw bytes into a `BYTES_ENTITY` record when its target is
+ * unset).
  *
  * Reads return `Output<EntityRecord | undefined>` for `fn=read`;
  * `fn=ls` and `fn=count` follow the same conventions as `Store`
  * (URI lists and numbers — see `./read.ts`).
  */
 
-import type { DeleteResult, Output, StatusResult } from "@bandeira-tech/b3nd-core/types";
+import type {
+  DeleteResult,
+  Output,
+  StatusResult,
+} from "@bandeira-tech/b3nd-core/types";
 import type { EntityRecord, EntitySchema, EntitySupport } from "./entity.ts";
 import type { StoreWriteResult } from "./types.ts";
 

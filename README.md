@@ -40,8 +40,9 @@ recognised and which it could not. The other three operations always carry the
 Records are open `Record<string, unknown>`, validated against the schema by the
 backend. The contract is **strict**: a record with extra or mistyped keys
 produces a `StoreWriteResult` failure for that entry — backends never silently
-coerce or drop fields. Coercion is the **client's** job (see `ByteStorageClient`
-below).
+coerce or drop fields. Coercion is the **client's** job (see `SaveClient` below
+— its `BYTES_ENTITY` mode wraps raw bytes into a `{ payload }` record for the
+store).
 
 ### Raw bytes — `BYTES_ENTITY`
 
@@ -57,8 +58,8 @@ export const BYTES_ENTITY: EntitySchema = {
 Every backend routes `BYTES_ENTITY` writes/reads through its native byte path
 (Postgres `BYTEA`, S3 object body, the filesystem file itself), so byte-shaped
 wires pay no schema overhead and benefit from native streaming on backends that
-support it (`fs`, `s3`, `ipfs`). `ByteStorageClient` is the client that puts a
-byte wire on top of this.
+support it (`fs`, `s3`, `ipfs`). `SaveClient` defaults its target to
+`BYTES_ENTITY`, so wires whose payload is opaque bytes need no configuration.
 
 ## Imports
 
@@ -68,10 +69,7 @@ of your bundle.
 ```ts
 // Narrow imports — footprint-aware
 import { PostgresStore } from "@bandeira-tech/b3nd-save/postgres";
-import {
-  ByteStorageClient,
-  EntityClient,
-} from "@bandeira-tech/b3nd-save/clients";
+import { SaveClient } from "@bandeira-tech/b3nd-save/clients";
 import { BYTES_ENTITY, TYPE_TAGS } from "@bandeira-tech/b3nd-save/entity";
 import type { EntityStore } from "@bandeira-tech/b3nd-save/entity-store";
 
@@ -99,22 +97,18 @@ import { clients, postgres } from "@bandeira-tech/b3nd-save";
 streamed write input to bytes before storing and always return `Uint8Array` on
 read.
 
-## Clients
+## Client
 
-`@bandeira-tech/b3nd-save/clients` provides the adapters from `EntityStore` to
-`ProtocolInterfaceNode`:
+`@bandeira-tech/b3nd-save/clients` exports a single class: **`SaveClient`** —
+the adapter from a save backend (`EntityStore` or legacy byte `Store`) to
+`ProtocolInterfaceNode`.
 
-- **`EntityClient`** — schema-aware. Wire is `[uri, record | null]`,
-  pass-through. `receive([uri, record])` writes typed records;
-  `receive([uri, null])` deletes; `read(urls)` returns records. Target schema is
-  swappable at runtime via `setTarget`.
-- **`ByteStorageClient`** — bytes-on-the-wire. Pins `BYTES_ENTITY`; translates
-  `[uri, bytes | null]` ↔ `{ payload: bytes }` records. The choice for wires
-  whose payload is opaque bytes (JSON / protobuf / CBOR / sealed blobs).
-- **`DataStoreClient`** — `ByteStorageClient` plus envelope decomposition.
-  Accepts inline `{ inputs, outputs }` envelopes, performs the
-  deletes-then-writes atomically (when the backend advertises `atomicBatch`),
-  emits observe events grouped by program.
+The target schema defaults to `BYTES_ENTITY`, so out-of-the-box the wire is
+`[uri, bytes | null]` and works against every backend in the package. Pass a
+schema to the constructor (or call `setTarget`) to switch to a typed record
+wire, `[uri, record | null]`. `setTarget` swaps the routed entity at runtime
+with no re-init. A byte-only backing store accepts only `BYTES_ENTITY` — asking
+for any other target throws.
 
 ## Backend-author helpers
 
@@ -139,10 +133,7 @@ built-ins follow.
 
 ```ts
 import { PostgresStore } from "jsr:@bandeira-tech/b3nd-save/postgres";
-import {
-  ByteStorageClient,
-  EntityClient,
-} from "jsr:@bandeira-tech/b3nd-save/clients";
+import { SaveClient } from "jsr:@bandeira-tech/b3nd-save/clients";
 import { TYPE_TAGS } from "jsr:@bandeira-tech/b3nd-save/entity";
 
 const userSchema = {
@@ -157,7 +148,7 @@ const userSchema = {
 const store = new PostgresStore("myapp", executor);
 
 // Typed record wire.
-const users = new EntityClient(userSchema, store);
+const users = new SaveClient(store, userSchema);
 await users.init();
 //          ^ provisions the `users` table, returns EntitySupport
 
@@ -171,8 +162,8 @@ const [[, alice]] = await users.read(["data://users/alice"]);
 
 users.setTarget(otherSchema); // hot-swap routed entity, no re-init
 
-// Byte wire on the same backend instance, pinned to BYTES_ENTITY.
-const bytes = new ByteStorageClient(store);
+// Byte wire on the same backend instance — default target is BYTES_ENTITY.
+const bytes = new SaveClient(store);
 await bytes.receive([["mutable://assets/logo.png", new Uint8Array([...])]]);
 ```
 
@@ -210,8 +201,9 @@ Backends do not coerce. A record under `schema` may only contain keys declared
 in `schema.fields`, with values compatible with the field's recognised tags.
 Anything else produces a `StoreWriteResult` failure for that entry. This is
 deliberate — rig misconfigurations stay loud rather than silently corrupting
-data. Coercion lives in the client (this is what `ByteStorageClient` does when
-it projects raw bytes into `{ payload: bytes }`).
+data. Coercion lives in the client (this is what `SaveClient` does in its
+default `BYTES_ENTITY` mode when it projects raw bytes into
+`{ payload: bytes }`).
 
 ### Encoding bytes any shape you like
 
