@@ -1,13 +1,23 @@
 /**
- * FsStore — Filesystem implementation of Store.
+ * FsStore — Filesystem implementation of EntityStore.
  *
- * Pure mechanical byte storage with no protocol awareness. Writes one
- * file per entry; the file body is the payload bytes verbatim. The
- * store is opaque — it does not parse or transform contents.
+ * Two layouts under one backend, picked by `EntitySchema`:
+ *
+ * - `BYTES_ENTITY` → `{rootDir}/{uriToRelPath(uri)}.bin`, raw bytes
+ *   body (current behaviour). One file per entry.
+ * - any other schema → `{rootDir}/entities/{entityName}/{uriToRelPath(uri)}.json`,
+ *   body = JSON-encoded record. Canonical `TYPE_TAGS` ↔ JSON encoding
+ *   (bytes → base64, bigint → string, timestamp → ISO-8601) lives in
+ *   `./fields.ts`.
+ *
+ * `ensureEntity` is idempotent and caches the field plan. The
+ * filesystem has no DDL — provisioning is purely client-side
+ * bookkeeping; the entity subdirectory is created lazily on first
+ * write by the executor's `writeFile`.
  *
  * `fn=ls` / `fn=count` are shallow direct-leaves only: they list the
- * `.bin` files directly inside the prefix's mapped directory, never
- * recursing into subdirectories.
+ * `.bin`/`.json` files directly inside the prefix's mapped directory,
+ * never recursing into subdirectories.
  */
 
 import type {
@@ -15,54 +25,66 @@ import type {
   Output,
   StatusResult,
 } from "@bandeira-tech/b3nd-core/types";
-import {
-  bytesOnlyDelete,
-  bytesOnlyRead,
-  bytesOnlySupport,
-  bytesOnlyWrite,
-} from "../byte-entity-shim.ts";
-import type { EntityStore } from "../entity-store.ts";
-import type { EntityRecord, EntitySchema, EntitySupport } from "../entity.ts";
-
 import type { ParsedUrl } from "@bandeira-tech/b3nd-core/url";
 import { dispatchRead } from "../dispatch.ts";
 import { storageFailure } from "../errors.ts";
 import { validateReadParams } from "../read.ts";
-import type {
-  StoreCapabilities,
-  StoreEntry,
-  StoreWriteResult,
-} from "../types.ts";
+import type { EntityStore } from "../entity-store.ts";
+import {
+  BYTES_ENTITY,
+  type EntityRecord,
+  type EntitySchema,
+  type EntitySupport,
+} from "../entity.ts";
+import type { StoreCapabilities, StoreWriteResult } from "../types.ts";
+import {
+  decodeRecord,
+  encodeRecord,
+  type FieldPlan,
+  planFields,
+} from "./fields.ts";
 import type { FsExecutor } from "./mod.ts";
 
 const STORE_NAME = "FsStore";
-const EXT = ".bin";
+const BYTES_EXT = ".bin";
+const ENTITY_EXT = ".json";
+const ENTITY_ROOT = "entities";
 
-/**
- * Convert a URI to a relative filesystem path.
- * `protocol://host/path` becomes `protocol_host/path.bin`.
- *
- * Only the FIRST `://` is rewritten — embedded `://` (rare but legal
- * in protocol-tunneling uris) stays in the path.
- */
-function uriToRelPath(uri: string): string {
-  return uri.replace("://", "_") + EXT;
+const NAME_PATTERN = /^[a-zA-Z][a-zA-Z0-9_]*$/;
+
+interface EntityMeta {
+  /** Absolute path of the entity's root directory under `rootDir`. */
+  dir: string;
+  fields: FieldPlan[];
+  declared: ReadonlySet<string>;
+  support: EntitySupport;
 }
 
-/**
- * Convert a relative filesystem path back to a URI.
- * `protocol_host/path.bin` becomes `protocol://host/path`.
- */
-function relPathToUri(relPath: string): string {
-  const withoutExt = relPath.endsWith(EXT)
-    ? relPath.slice(0, -EXT.length)
+function uriToRelPath(uri: string, ext: string): string {
+  return uri.replace("://", "_") + ext;
+}
+
+function relPathToUri(relPath: string, ext: string): string {
+  const withoutExt = relPath.endsWith(ext)
+    ? relPath.slice(0, -ext.length)
     : relPath;
   return withoutExt.replace("_", "://");
+}
+
+function isBytesSchema(schema: EntitySchema): boolean {
+  return schema.name === BYTES_ENTITY.name;
+}
+
+async function streamToString(
+  stream: ReadableStream<Uint8Array>,
+): Promise<string> {
+  return await new Response(stream as BodyInit).text();
 }
 
 export class FsStore implements EntityStore {
   private readonly rootDir: string;
   private readonly executor: FsExecutor;
+  private readonly entities = new Map<string, EntityMeta>();
 
   constructor(rootDir: string, executor: FsExecutor) {
     if (!rootDir) throw new Error("rootDir is required");
@@ -75,162 +97,97 @@ export class FsStore implements EntityStore {
   // ── EntityStore surface ──────────────────────────────────────────
 
   ensureEntity(schema: EntitySchema): Promise<EntitySupport> {
-    return Promise.resolve(bytesOnlySupport(schema));
+    const cached = this.entities.get(schema.name);
+    if (cached) return Promise.resolve(cached.support);
+
+    if (isBytesSchema(schema)) {
+      const meta: EntityMeta = {
+        dir: this.rootDir,
+        fields: [{ name: "payload", tag: "bytes" }],
+        declared: new Set(["payload"]),
+        support: {
+          entity: schema.name,
+          supported: ["payload"],
+          unsupported: [],
+        },
+      };
+      this.entities.set(schema.name, meta);
+      return Promise.resolve(meta.support);
+    }
+
+    if (!NAME_PATTERN.test(schema.name)) {
+      throw new Error(
+        `${STORE_NAME}: entity name '${schema.name}' must match ${NAME_PATTERN.source}`,
+      );
+    }
+    const { fields, unsupported } = planFields(schema.fields);
+    const meta: EntityMeta = {
+      dir: `${this.rootDir}/${ENTITY_ROOT}/${schema.name}`,
+      fields,
+      declared: new Set(fields.map((f) => f.name)),
+      support: {
+        entity: schema.name,
+        supported: fields.map((f) => f.name),
+        unsupported,
+      },
+    };
+    this.entities.set(schema.name, meta);
+    return Promise.resolve(meta.support);
   }
 
-  write(
+  async write(
     schema: EntitySchema,
     entries: { uri: string; record: EntityRecord }[],
   ): Promise<StoreWriteResult[]> {
-    return bytesOnlyWrite(
-      schema,
-      STORE_NAME,
-      entries,
-      (e) => this._writeBytes(e),
-    );
+    if (entries.length === 0) return [];
+    const meta = await this._meta(schema);
+    return isBytesSchema(schema)
+      ? this._writeBytes(meta, entries)
+      : this._writeEntity(meta, entries);
   }
 
   read<T = EntityRecord | undefined>(
     schema: EntitySchema,
     urls: string[],
   ): Promise<Output<T>[]> {
-    return bytesOnlyRead<T>(
-      schema,
-      STORE_NAME,
-      urls,
-      (u) => this._readBytes(u),
-    );
-  }
-
-  delete(schema: EntitySchema, uris: string[]): Promise<DeleteResult[]> {
-    return bytesOnlyDelete(
-      schema,
-      STORE_NAME,
-      uris,
-      (u) => this._deleteBytes(u),
-    );
-  }
-
-  // ── Byte ops (BYTES_ENTITY routing) ──────────────────────────────
-
-  private async _writeBytes(
-    entries: StoreEntry[],
-  ): Promise<StoreWriteResult[]> {
-    const results: StoreWriteResult[] = [];
-
-    for (const entry of entries) {
-      try {
-        await this.executor.writeFile(
-          this._resolvePath(entry.uri),
-          entry.payload,
-        );
-        results.push({ success: true });
-      } catch (err) {
-        results.push({
-          success: false,
-          ...storageFailure(err, "Write failed", entry.uri),
-        });
-      }
-    }
-
-    return results;
-  }
-
-  private _readBytes(urls: string[]): Promise<Output<unknown>[]> {
-    return dispatchRead<unknown>(urls, STORE_NAME, {
-      read: (p) => this._readOne(p.uri),
-      ls: (p) => this._ls(p),
-      count: (p) => this._count(p),
+    return dispatchRead<T>(urls, STORE_NAME, {
+      read: async (p) => {
+        const meta = await this._meta(schema);
+        return isBytesSchema(schema)
+          ? this._readBytesOne(meta, p.uri)
+          : this._readEntityOne(meta, p.uri);
+      },
+      ls: async (p) => {
+        const meta = await this._meta(schema);
+        return this._lsImpl(meta, p, isBytesSchema(schema));
+      },
+      count: async (p) => {
+        const meta = await this._meta(schema);
+        return this._count(meta, p, isBytesSchema(schema));
+      },
     });
   }
 
-  private async _readOne(
-    uri: string,
-  ): Promise<ReadableStream<Uint8Array> | undefined> {
-    try {
-      return await this.executor.readFile(this._resolvePath(uri));
-    } catch {
-      return undefined;
-    }
-  }
-
-  /** Resolve the on-disk directory that holds the direct leaves of `prefixUri`. */
-  private _dirForPrefix(prefixUri: string): string {
-    const rel = uriToRelPath(prefixUri).slice(0, -EXT.length).replace(
-      /\/+$/,
-      "",
-    );
-    return rel ? `${this.rootDir}/${rel}` : this.rootDir;
-  }
-
-  /** List direct-child URIs under a prefix (no recursion). */
-  private async _listChildUris(prefixUri: string): Promise<string[]> {
-    let files: string[];
-    try {
-      files = await this.executor.listFiles(this._dirForPrefix(prefixUri));
-    } catch {
-      return [];
-    }
-    const relDir = uriToRelPath(prefixUri).slice(0, -EXT.length).replace(
-      /\/+$/,
-      "",
-    );
-    return files
-      .filter((f) => f.endsWith(EXT) && !f.includes("/"))
-      .map((f) => relPathToUri(`${relDir}/${f}`));
-  }
-
-  private async _ls(parsed: ParsedUrl): Promise<Output[] | string[]> {
-    validateReadParams(parsed.params, STORE_NAME);
-    const { params } = parsed;
-    const format = params.format ?? "full";
-
-    let uris = await this._listChildUris(parsed.uri);
-
-    if (params.sortBy === "uri") {
-      const dir = params.sortOrder === "desc" ? -1 : 1;
-      uris = [...uris].sort((a, b) => a.localeCompare(b) * dir);
-    }
-    if (params.limit !== undefined) {
-      const page = params.page ?? 1;
-      const start = (page - 1) * params.limit;
-      uris = uris.slice(start, start + params.limit);
-    }
-
-    if (format === "uris") return uris;
-
-    const out: Output[] = [];
-    for (const uri of uris) {
-      out.push([uri, await this._readOne(uri)]);
-    }
-    return out;
-  }
-
-  private async _count(parsed: ParsedUrl): Promise<number> {
-    if (parsed.params.pattern !== undefined) {
-      throw new Error(`${STORE_NAME}: pattern filter not supported`);
-    }
-    return (await this._listChildUris(parsed.uri)).length;
-  }
-
-  private async _deleteBytes(uris: string[]): Promise<DeleteResult[]> {
+  async delete(
+    schema: EntitySchema,
+    uris: string[],
+  ): Promise<DeleteResult[]> {
+    if (uris.length === 0) return [];
+    const meta = await this._meta(schema);
     const results: DeleteResult[] = [];
-
     for (const uri of uris) {
       try {
-        await this.executor.removeFile(this._resolvePath(uri));
+        await this.executor.removeFile(
+          this._path(meta, uri, isBytesSchema(schema)),
+        );
         results.push({ success: true });
       } catch {
-        // File may not exist — succeed silently (matches the
-        // miss-is-not-an-error convention)
+        // File may not exist — succeed silently (miss-is-not-an-error).
         results.push({ success: true });
       }
     }
-
     return results;
   }
-
-  // ── Status ───────────────────────────────────────────────────────
 
   async status(): Promise<StatusResult> {
     try {
@@ -261,7 +218,216 @@ export class FsStore implements EntityStore {
     return { atomicBatch: false };
   }
 
-  private _resolvePath(uri: string): string {
-    return `${this.rootDir}/${uriToRelPath(uri)}`;
+  // ── Internals ────────────────────────────────────────────────────
+
+  private async _meta(schema: EntitySchema): Promise<EntityMeta> {
+    const cached = this.entities.get(schema.name);
+    if (cached) return cached;
+    await this.ensureEntity(schema);
+    return this.entities.get(schema.name)!;
+  }
+
+  private _path(meta: EntityMeta, uri: string, bytes: boolean): string {
+    const ext = bytes ? BYTES_EXT : ENTITY_EXT;
+    return `${meta.dir}/${uriToRelPath(uri, ext)}`;
+  }
+
+  private _dirForPrefix(
+    meta: EntityMeta,
+    prefixUri: string,
+    bytes: boolean,
+  ): string {
+    const ext = bytes ? BYTES_EXT : ENTITY_EXT;
+    const rel = uriToRelPath(prefixUri, ext)
+      .slice(0, -ext.length)
+      .replace(/\/+$/, "");
+    return rel ? `${meta.dir}/${rel}` : meta.dir;
+  }
+
+  private async _listChildUris(
+    meta: EntityMeta,
+    prefixUri: string,
+    bytes: boolean,
+  ): Promise<string[]> {
+    let files: string[];
+    try {
+      files = await this.executor.listFiles(
+        this._dirForPrefix(meta, prefixUri, bytes),
+      );
+    } catch {
+      return [];
+    }
+    const ext = bytes ? BYTES_EXT : ENTITY_EXT;
+    const relDir = uriToRelPath(prefixUri, ext)
+      .slice(0, -ext.length)
+      .replace(/\/+$/, "");
+    return files
+      .filter((f) => f.endsWith(ext) && !f.includes("/"))
+      .map((f) => relPathToUri(`${relDir}/${f}`, ext));
+  }
+
+  // ── BYTES_ENTITY layout ──────────────────────────────────────────
+
+  private async _writeBytes(
+    meta: EntityMeta,
+    entries: { uri: string; record: EntityRecord }[],
+  ): Promise<StoreWriteResult[]> {
+    const out: StoreWriteResult[] = [];
+    for (const { uri, record } of entries) {
+      const extras = Object.keys(record).filter((k) => !meta.declared.has(k));
+      if (extras.length > 0) {
+        out.push({
+          success: false,
+          ...storageFailure(
+            new Error(
+              `${STORE_NAME}: record contains keys not declared in schema 'bytes': ${
+                extras.join(", ")
+              }`,
+            ),
+            "Schema mismatch",
+            uri,
+          ),
+        });
+        continue;
+      }
+      const payload = record.payload;
+      if (
+        !(payload instanceof Uint8Array) &&
+        !(payload instanceof ReadableStream)
+      ) {
+        out.push({
+          success: false,
+          ...storageFailure(
+            new Error(
+              `${STORE_NAME}: BYTES_ENTITY record.payload must be Uint8Array or ReadableStream`,
+            ),
+            "Invalid record",
+            uri,
+          ),
+        });
+        continue;
+      }
+      try {
+        await this.executor.writeFile(this._path(meta, uri, true), payload);
+        out.push({ success: true });
+      } catch (err) {
+        out.push({
+          success: false,
+          ...storageFailure(err, "Write failed", uri),
+        });
+      }
+    }
+    return out;
+  }
+
+  private async _readBytesOne(
+    meta: EntityMeta,
+    uri: string,
+  ): Promise<EntityRecord | undefined> {
+    try {
+      const content = await this.executor.readFile(this._path(meta, uri, true));
+      return { payload: content };
+    } catch {
+      return undefined;
+    }
+  }
+
+  // ── Custom-entity layout ─────────────────────────────────────────
+
+  private async _writeEntity(
+    meta: EntityMeta,
+    entries: { uri: string; record: EntityRecord }[],
+  ): Promise<StoreWriteResult[]> {
+    const out: StoreWriteResult[] = [];
+    for (const { uri, record } of entries) {
+      const extras = Object.keys(record).filter((k) => !meta.declared.has(k));
+      if (extras.length > 0) {
+        out.push({
+          success: false,
+          ...storageFailure(
+            new Error(
+              `${STORE_NAME}: record contains keys not declared in schema '${meta.dir}': ${
+                extras.join(", ")
+              }`,
+            ),
+            "Schema mismatch",
+            uri,
+          ),
+        });
+        continue;
+      }
+      try {
+        const encoded = JSON.stringify(encodeRecord(meta.fields, record));
+        await this.executor.writeFile(
+          this._path(meta, uri, false),
+          new TextEncoder().encode(encoded),
+        );
+        out.push({ success: true });
+      } catch (err) {
+        out.push({
+          success: false,
+          ...storageFailure(err, "Write failed", uri),
+        });
+      }
+    }
+    return out;
+  }
+
+  private async _readEntityOne(
+    meta: EntityMeta,
+    uri: string,
+  ): Promise<EntityRecord | undefined> {
+    try {
+      const stream = await this.executor.readFile(this._path(meta, uri, false));
+      const text = await streamToString(stream);
+      const json = JSON.parse(text) as Record<string, unknown>;
+      return decodeRecord(meta.fields, json);
+    } catch {
+      return undefined;
+    }
+  }
+
+  // ── Shared ls/count ──────────────────────────────────────────────
+
+  private async _lsImpl(
+    meta: EntityMeta,
+    parsed: ParsedUrl,
+    bytes: boolean,
+  ): Promise<Output[] | string[]> {
+    validateReadParams(parsed.params, STORE_NAME);
+    const { params } = parsed;
+    const format = params.format ?? "full";
+    let uris = await this._listChildUris(meta, parsed.uri, bytes);
+
+    if (params.sortBy === "uri") {
+      const dir = params.sortOrder === "desc" ? -1 : 1;
+      uris = [...uris].sort((a, b) => a.localeCompare(b) * dir);
+    }
+    if (params.limit !== undefined) {
+      const page = params.page ?? 1;
+      const start = (page - 1) * params.limit;
+      uris = uris.slice(start, start + params.limit);
+    }
+    if (format === "uris") return uris;
+
+    const out: Output[] = [];
+    for (const uri of uris) {
+      const r = bytes
+        ? await this._readBytesOne(meta, uri)
+        : await this._readEntityOne(meta, uri);
+      out.push([uri, r]);
+    }
+    return out;
+  }
+
+  private async _count(
+    meta: EntityMeta,
+    parsed: ParsedUrl,
+    bytes: boolean,
+  ): Promise<number> {
+    if (parsed.params.pattern !== undefined) {
+      throw new Error(`${STORE_NAME}: pattern filter not supported`);
+    }
+    return (await this._listChildUris(meta, parsed.uri, bytes)).length;
   }
 }
