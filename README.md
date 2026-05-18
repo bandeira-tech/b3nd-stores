@@ -9,6 +9,35 @@ The **data-saving layer** for B3nd — everything between a node's
 - **Shared helpers** — for authors building their own backends without
   re-deriving the contract details.
 
+## Quick start
+
+```ts
+import { PostgresStore } from "@bandeira-tech/b3nd-save/postgres";
+import { SaveClient } from "@bandeira-tech/b3nd-save/clients";
+import { TYPE_TAGS } from "@bandeira-tech/b3nd-save/entity";
+
+const client = new SaveClient(
+  new PostgresStore("myapp", executor),
+  {
+    name: "users",
+    fields: [
+      { name: "name", type: [TYPE_TAGS.STRING] },
+      { name: "age", type: [TYPE_TAGS.NUMBER] },
+    ],
+  },
+);
+await client.init(); // provisions the medium, returns EntitySupport
+
+await client.receive([
+  ["data://users/alice", { name: "Alice", age: 30 }],
+  ["data://users/alice", null], // null payload = delete
+]);
+const [[, alice]] = await client.read(["data://users/alice"]);
+```
+
+Omit the schema to get the default `BYTES_ENTITY` target — the wire becomes
+`[uri, bytes | null]` and works against any backend in the package.
+
 ## The contract
 
 Every backend implements one interface: `EntityStore`. A backend instance hosts
@@ -128,44 +157,6 @@ for any other target throws.
 
 Use these when implementing a new `EntityStore` so it matches the contract the
 built-ins follow.
-
-## Quick start
-
-```ts
-import { PostgresStore } from "jsr:@bandeira-tech/b3nd-save/postgres";
-import { SaveClient } from "jsr:@bandeira-tech/b3nd-save/clients";
-import { TYPE_TAGS } from "jsr:@bandeira-tech/b3nd-save/entity";
-
-const userSchema = {
-  name: "users",
-  fields: [
-    { name: "name", type: [TYPE_TAGS.STRING] },
-    { name: "age", type: [TYPE_TAGS.NUMBER] },
-  ],
-};
-
-// One backend, many entities.
-const store = new PostgresStore("myapp", executor);
-
-// Typed record wire.
-const users = new SaveClient(store, userSchema);
-await users.init();
-//          ^ provisions the `users` table, returns EntitySupport
-
-await users.receive([
-  ["data://users/alice", { name: "Alice", age: 30 }],
-  ["data://users/bob", { name: "Bob", age: 25 }],
-]);
-
-const [[, alice]] = await users.read(["data://users/alice"]);
-// alice === { name: "Alice", age: 30 }
-
-users.setTarget(otherSchema); // hot-swap routed entity, no re-init
-
-// Byte wire on the same backend instance — default target is BYTES_ENTITY.
-const bytes = new SaveClient(store);
-await bytes.receive([["mutable://assets/logo.png", new Uint8Array([...])]]);
-```
 
 ## Entities
 
