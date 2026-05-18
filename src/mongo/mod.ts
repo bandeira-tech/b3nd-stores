@@ -3,7 +3,8 @@
  *
  * Store implementation backed by MongoDB. Requires an injected
  * MongoExecutor so the package does not depend on a specific MongoDB
- * driver.
+ * driver. Each method takes the target collection name, so a single
+ * executor can serve many entity collections.
  */
 
 export interface MongoFindManyOptions {
@@ -15,8 +16,12 @@ export interface MongoFindManyOptions {
 }
 
 export interface MongoExecutor {
-  insertOne(doc: Record<string, unknown>): Promise<{ acknowledged?: boolean }>;
+  insertOne(
+    collection: string,
+    doc: Record<string, unknown>,
+  ): Promise<{ acknowledged?: boolean }>;
   updateOne(
+    collection: string,
     filter: Record<string, unknown>,
     update: Record<string, unknown>,
     options?: Record<string, unknown>,
@@ -24,18 +29,28 @@ export interface MongoExecutor {
     { matchedCount?: number; modifiedCount?: number; upsertedId?: unknown }
   >;
   findOne(
+    collection: string,
     filter: Record<string, unknown>,
   ): Promise<Record<string, unknown> | null>;
   findMany(
+    collection: string,
     filter: Record<string, unknown>,
     options?: MongoFindManyOptions,
   ): Promise<Record<string, unknown>[]>;
-  countDocuments(filter: Record<string, unknown>): Promise<number>;
+  countDocuments(
+    collection: string,
+    filter: Record<string, unknown>,
+  ): Promise<number>;
   deleteOne(
+    collection: string,
     filter: Record<string, unknown>,
   ): Promise<{ deletedCount?: number }>;
+  /**
+   * Create the unique-on-`uri` index for an entity collection.
+   * Called by `MongoStore.ensureEntity`; idempotent.
+   */
+  ensureUriIndex(collection: string): Promise<void>;
   ping(): Promise<boolean>;
-  transaction?: <T>(fn: (executor: MongoExecutor) => Promise<T>) => Promise<T>;
   cleanup?: () => Promise<void>;
 }
 

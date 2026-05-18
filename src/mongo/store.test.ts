@@ -2,7 +2,7 @@
  * MongoStore unit tests — runs the shared suite against an in-memory
  * Mongo mock that supports the subset of the executor surface the
  * store actually uses (find/count with regex filter, sort, skip,
- * limit, projection).
+ * limit, projection) across multiple collections.
  */
 
 /// <reference lib="deno.ns" />
@@ -22,19 +22,31 @@ function filterByRegex(
     const regex = new RegExp((uriFilter as { $regex: string }).$regex);
     return docs.filter((d) => regex.test(d.uri as string));
   }
+  if (typeof uriFilter === "string") {
+    return docs.filter((d) => d.uri === uriFilter);
+  }
   return docs;
 }
 
 function createMockMongoExecutor(): MongoExecutor {
-  const docs = new Map<string, Record<string, unknown>>();
+  const collections = new Map<string, Map<string, Record<string, unknown>>>();
+  const bucket = (name: string) => {
+    let b = collections.get(name);
+    if (!b) {
+      b = new Map();
+      collections.set(name, b);
+    }
+    return b;
+  };
 
   return {
-    insertOne: (doc) => {
-      docs.set(doc.uri as string, { ...doc });
+    insertOne: (collection, doc) => {
+      bucket(collection).set(doc.uri as string, { ...doc });
       return Promise.resolve({ acknowledged: true });
     },
 
-    updateOne: (filter, update, options) => {
+    updateOne: (collection, filter, update, options) => {
+      const docs = bucket(collection);
       const uri = filter.uri as string;
       const $set = (update as { $set: Record<string, unknown> }).$set;
 
@@ -56,13 +68,18 @@ function createMockMongoExecutor(): MongoExecutor {
       return Promise.resolve({ matchedCount: 0, modifiedCount: 0 });
     },
 
-    findOne: (filter) => {
+    findOne: (collection, filter) => {
+      const docs = bucket(collection);
       const uri = filter.uri as string;
       return Promise.resolve(docs.get(uri) ?? null);
     },
 
-    findMany: (filter, options?: MongoFindManyOptions) => {
-      let out = filterByRegex([...docs.values()], filter);
+    findMany: (
+      collection,
+      filter,
+      options?: MongoFindManyOptions,
+    ) => {
+      let out = filterByRegex([...bucket(collection).values()], filter);
       if (options?.sort?.uri) {
         const dir = options.sort.uri;
         out = [...out].sort((a, b) =>
@@ -83,15 +100,20 @@ function createMockMongoExecutor(): MongoExecutor {
       return Promise.resolve(out);
     },
 
-    countDocuments: (filter) => {
-      return Promise.resolve(filterByRegex([...docs.values()], filter).length);
+    countDocuments: (collection, filter) => {
+      return Promise.resolve(
+        filterByRegex([...bucket(collection).values()], filter).length,
+      );
     },
 
-    deleteOne: (filter) => {
+    deleteOne: (collection, filter) => {
+      const docs = bucket(collection);
       const uri = filter.uri as string;
       const existed = docs.delete(uri);
       return Promise.resolve({ deletedCount: existed ? 1 : 0 });
     },
+
+    ensureUriIndex: (_collection) => Promise.resolve(),
 
     ping: () => Promise.resolve(true),
   };
