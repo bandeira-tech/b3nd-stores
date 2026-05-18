@@ -6,7 +6,7 @@ import {
   assertInstanceOf,
   assertThrows,
 } from "@std/assert";
-import { SaveClient } from "./save-client.ts";
+import { mapToBytes, passThroughRecord, SaveClient } from "./save-client.ts";
 import { MemoryStore } from "../memory/store.ts";
 import { BYTES_ENTITY, TYPE_TAGS } from "../entity.ts";
 import type { Store } from "../types.ts";
@@ -28,15 +28,21 @@ const postSchema = {
   fields: [{ name: "title", type: [TYPE_TAGS.STRING] }],
 };
 
-// ── bytes mode (default target = BYTES_ENTITY) ──────────────────────
+const bytesClient = (store: Store | MemoryStore = new MemoryStore()) =>
+  new SaveClient(mapToBytes, BYTES_ENTITY, store);
 
-Deno.test("SaveClient - default target is BYTES_ENTITY", () => {
-  const client = new SaveClient(new MemoryStore());
+const usersClient = (store: MemoryStore = new MemoryStore()) =>
+  new SaveClient(passThroughRecord, userSchema, store);
+
+// ── bytes mode (BYTES_ENTITY) ───────────────────────────────────────
+
+Deno.test("SaveClient - target is set from the constructor arg", () => {
+  const client = bytesClient();
   assertEquals(client.target.name, BYTES_ENTITY.name);
 });
 
 Deno.test("SaveClient - bytes: receive writes bytes at the URI", async () => {
-  const client = new SaveClient(new MemoryStore());
+  const client = bytesClient();
   const [res] = await client.receive([["mutable://app/config", enc("dark")]]);
   assertEquals(res.accepted, true);
   const [[, bytes]] = await client.read(["mutable://app/config"]);
@@ -45,7 +51,7 @@ Deno.test("SaveClient - bytes: receive writes bytes at the URI", async () => {
 });
 
 Deno.test("SaveClient - bytes: batch receive preserves order", async () => {
-  const client = new SaveClient(new MemoryStore());
+  const client = bytesClient();
   const results = await client.receive([
     ["mutable://app/a", enc("A")],
     ["mutable://app/b", enc("B")],
@@ -64,7 +70,7 @@ Deno.test("SaveClient - bytes: batch receive preserves order", async () => {
 });
 
 Deno.test("SaveClient - bytes: null payload deletes", async () => {
-  const client = new SaveClient(new MemoryStore());
+  const client = bytesClient();
   await client.receive([["mutable://x", enc("a")]]);
   const [d] = await client.receive([["mutable://x", null]]);
   assertEquals(d.accepted, true);
@@ -73,7 +79,7 @@ Deno.test("SaveClient - bytes: null payload deletes", async () => {
 });
 
 Deno.test("SaveClient - bytes: observe emits on receive and delete", async () => {
-  const client = new SaveClient(new MemoryStore());
+  const client = bytesClient();
   const ac = new AbortController();
   const events: string[] = [];
   const reader = (async () => {
@@ -98,7 +104,7 @@ Deno.test("SaveClient - observe works on a bare byte Store (no entity face)", as
       Promise.resolve(uris.map(() => ({ success: true as const }))),
     status: () => Promise.resolve({ status: "healthy" as const }),
   };
-  const client = new SaveClient(bareStore);
+  const client = bytesClient(bareStore);
   const ac = new AbortController();
   const observed: string[] = [];
   const done = (async () => {
@@ -113,15 +119,14 @@ Deno.test("SaveClient - observe works on a bare byte Store (no entity face)", as
 });
 
 Deno.test("SaveClient - status delegates to the store", async () => {
-  const client = new SaveClient(new MemoryStore());
-  const status = await client.status();
+  const status = await bytesClient().status();
   assertEquals(status.status, "healthy");
 });
 
 // ── entity mode (custom target) ─────────────────────────────────────
 
 Deno.test("SaveClient - entity: receive writes a record and read returns it", async () => {
-  const client = new SaveClient(new MemoryStore(), userSchema);
+  const client = usersClient();
   const [res] = await client.receive([
     ["data://users/alice", { name: "Alice", age: 30 }],
   ]);
@@ -132,7 +137,7 @@ Deno.test("SaveClient - entity: receive writes a record and read returns it", as
 });
 
 Deno.test("SaveClient - entity: null payload deletes the record", async () => {
-  const client = new SaveClient(new MemoryStore(), userSchema);
+  const client = usersClient();
   await client.receive([["data://users/alice", { name: "Alice", age: 30 }]]);
   const [res] = await client.receive([["data://users/alice", null]]);
   assertEquals(res.accepted, true);
@@ -140,14 +145,18 @@ Deno.test("SaveClient - entity: null payload deletes the record", async () => {
   assertEquals(rec, undefined);
 });
 
-Deno.test("SaveClient.init - reports support for the current target", async () => {
-  const client = new SaveClient(new MemoryStore(), {
-    name: "mixed",
-    fields: [
-      { name: "ok", type: [TYPE_TAGS.STRING] },
-      { name: "weird", type: ["not-a-known-tag"] },
-    ],
-  });
+Deno.test("SaveClient.init - reports support for the target", async () => {
+  const client = new SaveClient(
+    passThroughRecord,
+    {
+      name: "mixed",
+      fields: [
+        { name: "ok", type: [TYPE_TAGS.STRING] },
+        { name: "weird", type: ["not-a-known-tag"] },
+      ],
+    },
+    new MemoryStore(),
+  );
   const support = await client.init();
   assertEquals(support?.entity, "mixed");
   assertEquals(support?.supported, ["ok"]);
@@ -156,8 +165,8 @@ Deno.test("SaveClient.init - reports support for the current target", async () =
 
 Deno.test("SaveClient - one store, multiple entities via separate clients", async () => {
   const store = new MemoryStore();
-  const users = new SaveClient(store, userSchema);
-  const posts = new SaveClient(store, postSchema);
+  const users = new SaveClient(passThroughRecord, userSchema, store);
+  const posts = new SaveClient(passThroughRecord, postSchema, store);
   await users.receive([["data://u/alice", { name: "Alice", age: 30 }]]);
   await posts.receive([["data://p/hi", { title: "Hello" }]]);
   const [[, u]] = await store.read(userSchema, ["data://u/alice"]);
@@ -167,7 +176,7 @@ Deno.test("SaveClient - one store, multiple entities via separate clients", asyn
 });
 
 Deno.test("SaveClient - entity: mismatched record surfaces the store error", async () => {
-  const client = new SaveClient(new MemoryStore(), userSchema);
+  const client = usersClient();
   const [res] = await client.receive([
     ["data://users/alice", { name: "Alice", extra: "bad" }],
   ]);
@@ -176,7 +185,7 @@ Deno.test("SaveClient - entity: mismatched record surfaces the store error", asy
 });
 
 Deno.test("SaveClient - entity: observe emits on write and delete", async () => {
-  const client = new SaveClient(new MemoryStore(), userSchema);
+  const client = usersClient();
   const ac = new AbortController();
   const events: string[] = [];
   const reader = (async () => {
@@ -194,9 +203,66 @@ Deno.test("SaveClient - entity: observe emits on write and delete", async () => 
   assert(events.length >= 1);
 });
 
+// ── mapper ──────────────────────────────────────────────────────────
+
+Deno.test("SaveClient.mapper - projects custom wire shape into the schema", async () => {
+  const store = new MemoryStore();
+  // Wire: a JSON-like user blob. The mapper picks out the fields the
+  // schema declares and drops the rest.
+  type Wire = { id: string; name: string; age: number; extra: string };
+  const client = new SaveClient<Wire>(
+    (_uri, w) => ({ name: w.name, age: w.age }),
+    userSchema,
+    store,
+  );
+
+  const [res] = await client.receive([
+    [
+      "data://users/alice",
+      { id: "alice", name: "Alice", age: 30, extra: "ignored" },
+    ],
+  ]);
+  assertEquals(res.accepted, true);
+
+  const [[, rec]] = await store.read(userSchema, ["data://users/alice"]);
+  assertEquals(rec, { name: "Alice", age: 30 });
+});
+
+Deno.test("SaveClient.mapper - thrown error becomes a per-entry failure", async () => {
+  const client = new SaveClient<string>(
+    (_uri, json) => {
+      const parsed = JSON.parse(json) as { name?: string; age?: number };
+      if (!parsed.name) throw new Error("name is required");
+      return { name: parsed.name, age: parsed.age ?? 0 };
+    },
+    userSchema,
+    new MemoryStore(),
+  );
+
+  const results = await client.receive([
+    ["data://users/a", JSON.stringify({ name: "Alice", age: 30 })],
+    ["data://users/b", JSON.stringify({ age: 25 })], // missing name
+  ]);
+  assertEquals(results[0].accepted, true);
+  assertEquals(results[1].accepted, false);
+  assert(results[1].error?.includes("name is required"));
+});
+
+Deno.test("SaveClient.mapper - encodes structured wire payloads into BYTES_ENTITY", async () => {
+  const client = new SaveClient<{ msg: string }>(
+    (_uri, obj) => ({ payload: new TextEncoder().encode(JSON.stringify(obj)) }),
+    BYTES_ENTITY,
+    new MemoryStore(),
+  );
+
+  await client.receive([["mutable://greet", { msg: "hello" }]]);
+  const [[, bytes]] = await client.read(["mutable://greet"]);
+  assertEquals(dec(bytes), JSON.stringify({ msg: "hello" }));
+});
+
 // ── byte-only store enforcement ─────────────────────────────────────
 
-Deno.test("SaveClient - byte-only store rejects non-BYTES_ENTITY target in ctor", () => {
+Deno.test("SaveClient - byte-only store rejects non-BYTES_ENTITY target", () => {
   const bareStore: Store = {
     write: () => Promise.resolve([]),
     read: () => Promise.resolve([]),
@@ -204,7 +270,7 @@ Deno.test("SaveClient - byte-only store rejects non-BYTES_ENTITY target in ctor"
     status: () => Promise.resolve({ status: "healthy" as const }),
   };
   assertThrows(
-    () => new SaveClient(bareStore, userSchema),
+    () => new SaveClient(passThroughRecord, userSchema, bareStore),
     Error,
     "EntityStore",
   );

@@ -11,20 +11,28 @@ The **data-saving layer** for B3nd — everything between a node's
 
 ## Quick start
 
+A `SaveClient` reads as **"receive payloads X, map as Y, store on S"**:
+
 ```ts
 import { PostgresStore } from "@bandeira-tech/b3nd-save/postgres";
-import { SaveClient } from "@bandeira-tech/b3nd-save/clients";
+import {
+  passThroughRecord,
+  SaveClient,
+} from "@bandeira-tech/b3nd-save/clients";
 import { TYPE_TAGS } from "@bandeira-tech/b3nd-save/entity";
 
+const users = {
+  name: "users",
+  fields: [
+    { name: "name", type: [TYPE_TAGS.STRING] },
+    { name: "age", type: [TYPE_TAGS.NUMBER] },
+  ],
+};
+
 const client = new SaveClient(
-  new PostgresStore("myapp", executor),
-  {
-    name: "users",
-    fields: [
-      { name: "name", type: [TYPE_TAGS.STRING] },
-      { name: "age", type: [TYPE_TAGS.NUMBER] },
-    ],
-  },
+  passThroughRecord, //                                  ← mapper: wire → record
+  users, //                                              ← entity schema
+  new PostgresStore("myapp", executor), //               ← store
 );
 await client.init(); // provisions the medium, returns EntitySupport
 
@@ -35,8 +43,16 @@ await client.receive([
 const [[, alice]] = await client.read(["data://users/alice"]);
 ```
 
-Omit the schema to get the default `BYTES_ENTITY` target — the wire becomes
-`[uri, bytes | null]` and works against any backend in the package.
+The mapper is a freeform `(uri, payload) => EntityRecord` — it does whatever
+projection the wire requires, including dropping fields, signing, decoding
+envelopes. Two built-in mappers cover the common cases:
+
+- `passThroughRecord` — wire payload is already the record.
+- `mapToBytes` — wraps an opaque byte payload into `{ payload }` for
+  `BYTES_ENTITY`.
+
+Use `mapToBytes` with `BYTES_ENTITY` to get bytes-on-the-wire against any
+backend in the package.
 
 ## The contract
 
@@ -87,8 +103,8 @@ export const BYTES_ENTITY: EntitySchema = {
 Every backend routes `BYTES_ENTITY` writes/reads through its native byte path
 (Postgres `BYTEA`, S3 object body, the filesystem file itself), so byte-shaped
 wires pay no schema overhead and benefit from native streaming on backends that
-support it (`fs`, `s3`, `ipfs`). `SaveClient` defaults its target to
-`BYTES_ENTITY`, so wires whose payload is opaque bytes need no configuration.
+support it (`fs`, `s3`, `ipfs`). Use `BYTES_ENTITY` with the `mapToBytes` client
+mapper for any opaque-bytes wire.
 
 ## Imports
 
@@ -98,7 +114,12 @@ of your bundle.
 ```ts
 // Narrow imports — footprint-aware
 import { PostgresStore } from "@bandeira-tech/b3nd-save/postgres";
-import { SaveClient } from "@bandeira-tech/b3nd-save/clients";
+import {
+  mapToBytes,
+  passThroughRecord,
+  SaveClient,
+  type SaveMapper,
+} from "@bandeira-tech/b3nd-save/clients";
 import { BYTES_ENTITY, TYPE_TAGS } from "@bandeira-tech/b3nd-save/entity";
 import type { EntityStore } from "@bandeira-tech/b3nd-save/entity-store";
 
@@ -128,16 +149,32 @@ read.
 
 ## Client
 
-`@bandeira-tech/b3nd-save/clients` exports a single class: **`SaveClient`** —
-the adapter from a save backend (`EntityStore` or legacy byte `Store`) to
-`ProtocolInterfaceNode`.
+`@bandeira-tech/b3nd-save/clients` exports **`SaveClient`** — the adapter from a
+save backend (`EntityStore` or legacy byte `Store`) to `ProtocolInterfaceNode`.
+Three required args, read as a sentence:
 
-The target schema defaults to `BYTES_ENTITY`, so out-of-the-box the wire is
-`[uri, bytes | null]` and works against every backend in the package. Pass a
-schema to the constructor to switch to a typed record wire,
-`[uri, record | null]`. The target is sealed at construction — one client routes
-one entity; route a different one with a different `SaveClient`. A byte-only
-backing store accepts only `BYTES_ENTITY` — asking for any other target throws.
+```ts
+new SaveClient(mapper, entity, store);
+```
+
+- **mapper** — `SaveMapper<TIn> = (uri, payload) => EntityRecord` (or async).
+  Freeform projection from the wire payload to a record matching `entity`.
+  Throwing produces a per-entry `ReceiveResult` failure; the rest of the batch
+  proceeds.
+- **entity** — the `EntitySchema` this client routes. Use `BYTES_ENTITY` for
+  opaque bytes.
+- **store** — an `EntityStore`, or a legacy byte `Store` if `entity` is
+  `BYTES_ENTITY` (any other entity throws on a byte-only store).
+
+Two mappers ship with the package:
+
+- `passThroughRecord` — wire payload is already an `EntityRecord`.
+- `mapToBytes` — wraps an opaque byte payload as a `BYTES_ENTITY` record.
+
+The triple `(mapper, entity, store)` is sealed at construction — one client
+routes one entity. Route a different one with a different `SaveClient`. Reads
+return the stored records (or raw bytes for `BYTES_ENTITY`); the mapper is
+receive-only.
 
 ## Backend-author helpers
 

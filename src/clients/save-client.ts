@@ -5,25 +5,33 @@
  * legacy byte {@link Store}, picked at construction by duck-typing on
  * `ensureEntity`.
  *
- * The target schema defaults to {@link BYTES_ENTITY}: bytes-on-the-wire
- * unless the caller asks for something else. Mirrors how
- * `MemoryStore` routes byte calls through `BYTES_ENTITY` while the rest
- * of the package's backends migrate to `EntityStore` — byte is the
- * lingua franca, structured entities are an opt-in.
+ * Construction shape:
  *
- * Wire shape (an `Output` is `[uri, payload]`; we accept `null` as the
- * delete-by-convention payload):
+ *     new SaveClient(mapper, entity, store)
  *
- * - `BYTES_ENTITY` target: `payload` is `Uint8Array | ReadableStream<Uint8Array>`.
- *   Writes wrap into `{ payload: bytes }`; reads unwrap back to bytes.
- * - Other target: `payload` is an `EntityRecord` (open
- *   `Record<string, unknown>`), pass-through on both directions.
- * - `null` payload deletes the URI under the target.
+ * Reads on the rig: "receive payloads X, map as Y into entity E,
+ * store on S". All three are explicit; the client does not invent
+ * defaults.
  *
- * The target is sealed at construction. A `SaveClient` is a one-shot,
- * isolated thing: each one routes one entity, and routing a different
- * entity means constructing a different client. A byte-only backing
- * store accepts only `BYTES_ENTITY` — passing any other target throws.
+ * - **mapper** — a {@link SaveMapper}: freeform projection from the
+ *   wire payload `TIn` to an `EntityRecord` matching `entity`. Runs
+ *   per write entry; throwing produces a per-entry `ReceiveResult`
+ *   failure. {@link mapToBytes} and {@link passThroughRecord} cover
+ *   the common cases.
+ * - **entity** — the {@link EntitySchema} this client routes. Use
+ *   {@link BYTES_ENTITY} for opaque-bytes wires.
+ * - **store** — an {@link EntityStore}, or a legacy byte {@link Store}
+ *   if `entity` is `BYTES_ENTITY`.
+ *
+ * Wire shape: a `receive` message is `Output<TIn | null>` —
+ * `[uri, payload]` where `payload === null` is the delete-by-convention.
+ * Reads come back as the stored records (or raw bytes when `entity`
+ * is `BYTES_ENTITY`); the mapper is receive-only.
+ *
+ * A `SaveClient` is a one-shot, isolated thing: each one routes one
+ * entity, and routing a different entity means constructing a
+ * different client. A byte-only backing store accepts only
+ * `BYTES_ENTITY` — passing any other entity throws.
  */
 
 import type {
@@ -43,6 +51,34 @@ import {
 import type { Store, StorePayload } from "../types.ts";
 
 type SaveStore = EntityStore | Store;
+
+/**
+ * Freeform projection from wire payload → `EntityRecord` for the
+ * target schema. Runs per write entry inside `SaveClient.receive`.
+ * Throwing produces a `ReceiveResult` failure for that entry; the
+ * rest of the batch is unaffected.
+ */
+export type SaveMapper<TIn = unknown> = (
+  uri: string,
+  payload: TIn,
+) => EntityRecord | Promise<EntityRecord>;
+
+/**
+ * Built-in mapper that wraps a byte payload as a `BYTES_ENTITY`
+ * record (`{ payload: bytes }`). Use with `target: BYTES_ENTITY` when
+ * the wire is already opaque bytes.
+ */
+export const mapToBytes: SaveMapper<StorePayload> = (_uri, payload) => ({
+  payload,
+});
+
+/**
+ * Built-in mapper that passes the wire payload through as-is,
+ * assuming it already matches the target schema. Use when the
+ * protocol upstream has already produced a valid `EntityRecord`.
+ */
+export const passThroughRecord: SaveMapper<EntityRecord> = (_uri, payload) =>
+  payload;
 
 function isEntityStore(store: SaveStore): store is EntityStore {
   return typeof (store as EntityStore).ensureEntity === "function";
@@ -79,15 +115,22 @@ function unwrapBytes(value: unknown): unknown {
   return value;
 }
 
-export class SaveClient extends ObserveEmitter
+export class SaveClient<TIn = unknown> extends ObserveEmitter
   implements ProtocolInterfaceNode {
-  readonly store: SaveStore;
+  readonly mapper: SaveMapper<TIn>;
   readonly target: EntitySchema;
+  readonly store: SaveStore;
   private readonly _isEntity: boolean;
   private _ensurePromise: Promise<EntitySupport | undefined> | null = null;
 
-  constructor(store: SaveStore, target: EntitySchema = BYTES_ENTITY) {
+  constructor(
+    mapper: SaveMapper<TIn>,
+    target: EntitySchema,
+    store: SaveStore,
+  ) {
     super();
+    this.mapper = mapper;
+    this.target = target;
     this.store = store;
     this._isEntity = isEntityStore(store);
     if (!this._isEntity && target.name !== BYTES_ENTITY.name) {
@@ -96,7 +139,6 @@ export class SaveClient extends ObserveEmitter
           `target must be BYTES_ENTITY (got '${target.name}')`,
       );
     }
-    this.target = target;
   }
 
   /**
@@ -113,14 +155,18 @@ export class SaveClient extends ObserveEmitter
   }
 
   async receive(
-    msgs: Output<EntityRecord | StorePayload | null>[],
+    msgs: Output<TIn | null>[],
   ): Promise<ReceiveResult[]> {
     await this.init();
     const target = this.target;
-    const isBytes = target.name === BYTES_ENTITY.name;
 
     const results: ReceiveResult[] = new Array(msgs.length);
-    const writes: { uri: string; payload: unknown; index: number }[] = [];
+    const writes: {
+      uri: string;
+      record: EntityRecord;
+      wire: TIn;
+      index: number;
+    }[] = [];
     const deletes: { uri: string; index: number }[] = [];
 
     for (let i = 0; i < msgs.length; i++) {
@@ -129,25 +175,31 @@ export class SaveClient extends ObserveEmitter
         results[i] = { accepted: false, error: "URI is required" };
         continue;
       }
-      if (payload === null) deletes.push({ uri, index: i });
-      else writes.push({ uri, payload, index: i });
+      if (payload === null) {
+        deletes.push({ uri, index: i });
+        continue;
+      }
+      try {
+        const record = await this.mapper(uri, payload as TIn);
+        writes.push({ uri, record, wire: payload as TIn, index: i });
+      } catch (e) {
+        results[i] = {
+          accepted: false,
+          error: e instanceof Error ? e.message : String(e),
+        };
+      }
     }
 
     if (writes.length > 0) {
       const writeResults = this._isEntity
         ? await (this.store as EntityStore).write(
           target,
-          writes.map(({ uri, payload }) => ({
-            uri,
-            record: isBytes
-              ? ({ payload } as EntityRecord)
-              : (payload as EntityRecord),
-          })),
+          writes.map(({ uri, record }) => ({ uri, record })),
         )
         : await (this.store as Store).write(
-          writes.map(({ uri, payload }) => ({
+          writes.map(({ uri, record }) => ({
             uri,
-            payload: payload as StorePayload,
+            payload: record.payload as StorePayload,
           })),
         );
 
@@ -155,7 +207,7 @@ export class SaveClient extends ObserveEmitter
         const w = writes[j];
         const r = writeResults[j];
         results[w.index] = { accepted: r.success, error: r.error };
-        if (r.success) this._emit(w.uri, w.payload);
+        if (r.success) this._emit(w.uri, w.wire);
       }
     }
 
