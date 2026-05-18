@@ -17,12 +17,12 @@
  *   Writes wrap into `{ payload: bytes }`; reads unwrap back to bytes.
  * - Other target: `payload` is an `EntityRecord` (open
  *   `Record<string, unknown>`), pass-through on both directions.
- * - `null` payload deletes the URI under the current target.
+ * - `null` payload deletes the URI under the target.
  *
- * Target is swappable at runtime via {@link setTarget}. A byte-only
- * backing store accepts only `BYTES_ENTITY`; passing any other target
- * (in the constructor or via `setTarget`) throws — the store has
- * nowhere to put a non-byte record.
+ * The target is sealed at construction. A `SaveClient` is a one-shot,
+ * isolated thing: each one routes one entity, and routing a different
+ * entity means constructing a different client. A byte-only backing
+ * store accepts only `BYTES_ENTITY` — passing any other target throws.
  */
 
 import type {
@@ -82,53 +82,41 @@ function unwrapBytes(value: unknown): unknown {
 export class SaveClient extends ObserveEmitter
   implements ProtocolInterfaceNode {
   readonly store: SaveStore;
-  private _target: EntitySchema;
+  readonly target: EntitySchema;
   private readonly _isEntity: boolean;
-  private readonly _ensured = new Map<string, Promise<EntitySupport>>();
+  private _ensurePromise: Promise<EntitySupport | undefined> | null = null;
 
   constructor(store: SaveStore, target: EntitySchema = BYTES_ENTITY) {
     super();
     this.store = store;
     this._isEntity = isEntityStore(store);
-    this._guard(target);
-    this._target = target;
-  }
-
-  /** The schema currently being routed. */
-  get target(): EntitySchema {
-    return this._target;
-  }
-
-  /**
-   * Swap the target schema. The next operation lazily provisions the
-   * new entity on the store (entity backends only). A byte-only store
-   * rejects anything other than `BYTES_ENTITY`.
-   */
-  setTarget(schema: EntitySchema): void {
-    this._guard(schema);
-    this._target = schema;
+    if (!this._isEntity && target.name !== BYTES_ENTITY.name) {
+      throw new Error(
+        `SaveClient: backing store does not implement EntityStore; ` +
+          `target must be BYTES_ENTITY (got '${target.name}')`,
+      );
+    }
+    this.target = target;
   }
 
   /**
-   * Eagerly provision the current target on an `EntityStore`. Returns
-   * the {@link EntitySupport} report. Byte-only stores return
-   * `undefined` — they don't carry per-entity metadata.
+   * Eagerly provision the target on an `EntityStore`. Returns the
+   * {@link EntitySupport} report. Byte-only stores return `undefined`
+   * — they don't carry per-entity metadata.
    */
   init(): Promise<EntitySupport | undefined> {
-    if (!this._isEntity) return Promise.resolve(undefined);
-    const key = this._target.name;
-    const cached = this._ensured.get(key);
-    if (cached) return cached;
-    const p = (this.store as EntityStore).ensureEntity(this._target);
-    this._ensured.set(key, p);
-    return p;
+    if (this._ensurePromise) return this._ensurePromise;
+    this._ensurePromise = this._isEntity
+      ? (this.store as EntityStore).ensureEntity(this.target)
+      : Promise.resolve(undefined);
+    return this._ensurePromise;
   }
 
   async receive(
     msgs: Message<EntityRecord | StorePayload | null>[],
   ): Promise<ReceiveResult[]> {
     await this.init();
-    const target = this._target;
+    const target = this.target;
     const isBytes = target.name === BYTES_ENTITY.name;
 
     const results: ReceiveResult[] = new Array(msgs.length);
@@ -196,7 +184,7 @@ export class SaveClient extends ObserveEmitter
     urls: string[],
   ): Promise<Output<T>[]> {
     await this.init();
-    const target = this._target;
+    const target = this.target;
     const isBytes = target.name === BYTES_ENTITY.name;
 
     if (!this._isEntity) {
@@ -214,14 +202,5 @@ export class SaveClient extends ObserveEmitter
 
   status(): Promise<StatusResult> {
     return this.store.status();
-  }
-
-  private _guard(schema: EntitySchema): void {
-    if (!this._isEntity && schema.name !== BYTES_ENTITY.name) {
-      throw new Error(
-        `SaveClient: backing store does not implement EntityStore; ` +
-          `target must be BYTES_ENTITY (got '${schema.name}')`,
-      );
-    }
   }
 }

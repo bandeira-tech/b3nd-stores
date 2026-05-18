@@ -154,13 +154,12 @@ Deno.test("SaveClient.init - reports support for the current target", async () =
   assertEquals(support?.unsupported.length, 1);
 });
 
-Deno.test("SaveClient.setTarget - routes subsequent ops to the new entity", async () => {
+Deno.test("SaveClient - one store, multiple entities via separate clients", async () => {
   const store = new MemoryStore();
-  const client = new SaveClient(store, userSchema);
-  await client.receive([["data://u/alice", { name: "Alice", age: 30 }]]);
-  client.setTarget(postSchema);
-  await client.receive([["data://p/hi", { title: "Hello" }]]);
-  assertEquals(client.target.name, "posts");
+  const users = new SaveClient(store, userSchema);
+  const posts = new SaveClient(store, postSchema);
+  await users.receive([["data://u/alice", { name: "Alice", age: 30 }]]);
+  await posts.receive([["data://p/hi", { title: "Hello" }]]);
   const [[, u]] = await store.read(userSchema, ["data://u/alice"]);
   const [[, p]] = await store.read(postSchema, ["data://p/hi"]);
   assertEquals(u, { name: "Alice", age: 30 });
@@ -209,15 +208,4 @@ Deno.test("SaveClient - byte-only store rejects non-BYTES_ENTITY target in ctor"
     Error,
     "EntityStore",
   );
-});
-
-Deno.test("SaveClient - byte-only store rejects setTarget away from BYTES_ENTITY", () => {
-  const bareStore: Store = {
-    write: () => Promise.resolve([]),
-    read: () => Promise.resolve([]),
-    delete: () => Promise.resolve([]),
-    status: () => Promise.resolve({ status: "healthy" as const }),
-  };
-  const client = new SaveClient(bareStore);
-  assertThrows(() => client.setTarget(userSchema), Error, "EntityStore");
 });

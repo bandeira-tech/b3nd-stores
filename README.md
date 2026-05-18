@@ -134,10 +134,10 @@ the adapter from a save backend (`EntityStore` or legacy byte `Store`) to
 
 The target schema defaults to `BYTES_ENTITY`, so out-of-the-box the wire is
 `[uri, bytes | null]` and works against every backend in the package. Pass a
-schema to the constructor (or call `setTarget`) to switch to a typed record
-wire, `[uri, record | null]`. `setTarget` swaps the routed entity at runtime
-with no re-init. A byte-only backing store accepts only `BYTES_ENTITY` — asking
-for any other target throws.
+schema to the constructor to switch to a typed record wire,
+`[uri, record | null]`. The target is sealed at construction — one client routes
+one entity; route a different one with a different `SaveClient`. A byte-only
+backing store accepts only `BYTES_ENTITY` — asking for any other target throws.
 
 ## Backend-author helpers
 
