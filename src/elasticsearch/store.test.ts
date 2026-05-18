@@ -104,6 +104,11 @@ function createMockElasticsearchExecutor(): ElasticsearchExecutor {
       return Promise.resolve();
     },
 
+    ensureIndex: (index, _mappings) => {
+      getIndex(index); // ensure bucket exists
+      return Promise.resolve();
+    },
+
     ping: () => Promise.resolve(true),
   };
 }

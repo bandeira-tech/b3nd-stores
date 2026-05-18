@@ -39,6 +39,15 @@ export interface ElasticsearchExecutor {
     body: Record<string, unknown>,
   ) => Promise<number>;
   delete: (index: string, id: string) => Promise<void>;
+  /**
+   * Create an index with the given mappings if it doesn't already
+   * exist. Called by `ElasticsearchStore.ensureEntity` for custom
+   * entity schemas; idempotent.
+   */
+  ensureIndex: (
+    index: string,
+    mappings: Record<string, unknown>,
+  ) => Promise<void>;
   ping: () => Promise<boolean>;
   cleanup?: () => Promise<void>;
 }

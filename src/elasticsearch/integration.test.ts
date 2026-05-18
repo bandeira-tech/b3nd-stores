@@ -19,8 +19,10 @@
 
 /// <reference lib="deno.ns" />
 
+import { assert, assertEquals } from "@std/assert";
 import { runSharedStoreSuite } from "../../tests/runners/shared-store-suite.ts";
 import { ElasticsearchStore } from "./store.ts";
+import { type EntityRecord, type EntitySchema, TYPE_TAGS } from "../entity.ts";
 import type {
   ElasticsearchExecutor,
   ElasticsearchSearchResult,
@@ -147,6 +149,28 @@ function createElasticsearchExecutor(): ElasticsearchExecutor {
       await res.text();
     },
 
+    async ensureIndex(index, mappings) {
+      const exists = await jsonRequest(
+        "HEAD",
+        `/${encodeURIComponent(index)}`,
+      );
+      await exists.text();
+      if (exists.status === 200) return;
+      const res = await jsonRequest(
+        "PUT",
+        `/${encodeURIComponent(index)}`,
+        { mappings },
+      );
+      // 400 with `resource_already_exists_exception` is a race we
+      // can swallow — another caller created it first.
+      if (!res.ok && res.status !== 400) {
+        throw new Error(
+          `ES create index failed: ${res.status} ${await res.text()}`,
+        );
+      }
+      await res.text();
+    },
+
     async ping() {
       try {
         const res = await fetch(`${base}/`, { method: "GET" });
@@ -167,6 +191,184 @@ runSharedStoreSuite("ElasticsearchStore (integration)", {
       `${PREFIX_BASE}_${runId}_${++testCount}`,
       createElasticsearchExecutor(),
     ),
+});
+
+// ── Native entity indices ─────────────────────────────────────────
+
+const userSchema: EntitySchema = {
+  name: "users",
+  fields: [
+    { name: "name", type: [TYPE_TAGS.STRING] },
+    { name: "age", type: [TYPE_TAGS.NUMBER] },
+    { name: "active", type: [TYPE_TAGS.BOOLEAN] },
+    { name: "extras", type: [TYPE_TAGS.JSON] },
+    { name: "avatar", type: [TYPE_TAGS.BYTES] },
+  ],
+};
+
+const postSchema: EntitySchema = {
+  name: "posts",
+  fields: [
+    { name: "title", type: [TYPE_TAGS.STRING] },
+    { name: "stars", type: [TYPE_TAGS.NUMBER] },
+  ],
+};
+
+function freshEntityStore(): { store: ElasticsearchStore; prefix: string } {
+  const prefix = `${PREFIX_BASE}_${runId}_${++testCount}`;
+  return {
+    store: new ElasticsearchStore(prefix, createElasticsearchExecutor()),
+    prefix,
+  };
+}
+
+Deno.test({
+  name:
+    "ElasticsearchStore (integration) - ensureEntity creates index with mappings",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const { store, prefix } = freshEntityStore();
+    const support = await store.ensureEntity(userSchema);
+    assertEquals(support.entity, "users");
+    assertEquals(support.unsupported, []);
+    assertEquals(
+      support.supported.sort(),
+      ["active", "age", "avatar", "extras", "name"],
+    );
+    const base = ES_ENDPOINT.replace(/\/+$/, "");
+    const res = await fetch(`${base}/${prefix}_users_data/_mapping`);
+    const json = await res.json() as Record<string, {
+      mappings: { properties: Record<string, { type: string }> };
+    }>;
+    const props = json[`${prefix}_users_data`].mappings.properties;
+    assertEquals(props.uri.type, "keyword");
+    assertEquals(props.name.type, "keyword");
+    assertEquals(props.age.type, "double");
+    assertEquals(props.active.type, "boolean");
+    assertEquals(props.avatar.type, "binary");
+    assertEquals(props.extras.type, "object");
+  },
+});
+
+Deno.test({
+  name:
+    "ElasticsearchStore (integration) - write/read round-trip on a custom entity",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const { store } = freshEntityStore();
+    await store.ensureEntity(userSchema);
+    const avatar = new Uint8Array([1, 2, 3, 4, 5]);
+    const [w] = await store.write(userSchema, [{
+      uri: "data://users/alice",
+      record: {
+        name: "Alice",
+        age: 30,
+        active: true,
+        extras: { tags: ["admin"] },
+        avatar,
+      },
+    }]);
+    assertEquals(w.success, true);
+
+    const [[, rec]] = await store.read(userSchema, ["data://users/alice"]);
+    const r = rec as EntityRecord;
+    assertEquals(r.name, "Alice");
+    assertEquals(r.age, 30);
+    assertEquals(r.active, true);
+    assertEquals(r.extras, { tags: ["admin"] });
+    assert(r.avatar instanceof Uint8Array);
+    assertEquals(Array.from(r.avatar as Uint8Array), [1, 2, 3, 4, 5]);
+  },
+});
+
+Deno.test({
+  name: "ElasticsearchStore (integration) - strict validation rejects extras",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const { store } = freshEntityStore();
+    await store.ensureEntity(userSchema);
+    const [r] = await store.write(userSchema, [{
+      uri: "data://users/x",
+      record: { name: "X", age: 0, mystery: "not declared" } as EntityRecord,
+    }]);
+    assertEquals(r.success, false);
+    assert(r.error?.includes("not declared"));
+    assertEquals(r.errorDetail?.uri, "data://users/x");
+  },
+});
+
+Deno.test({
+  name: "ElasticsearchStore (integration) - ls/count on a custom entity",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const { store } = freshEntityStore();
+    await store.ensureEntity(postSchema);
+    await store.write(postSchema, [
+      { uri: "data://posts/a", record: { title: "A", stars: 1 } },
+      { uri: "data://posts/b", record: { title: "B", stars: 2 } },
+      { uri: "data://posts/sub/deep", record: { title: "deep", stars: 9 } },
+    ]);
+    // ES is near-real-time; refresh isn't on writes since ensureIndex
+    // doesn't set it. Wait briefly to let the documents become
+    // searchable for the ls/count below.
+    await new Promise((r) => setTimeout(r, 1500));
+    const [[, count]] = await store.read<number>(postSchema, [
+      "data://posts/?fn=count",
+    ]);
+    assertEquals(count, 2);
+    const [[, uris]] = await store.read<string[]>(postSchema, [
+      "data://posts/?fn=ls&format=uris&sortBy=uri",
+    ]);
+    assertEquals(uris, ["data://posts/a", "data://posts/b"]);
+  },
+});
+
+Deno.test({
+  name:
+    "ElasticsearchStore (integration) - delete removes from the entity index",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const { store } = freshEntityStore();
+    await store.ensureEntity(userSchema);
+    await store.write(userSchema, [{
+      uri: "data://users/del",
+      record: {
+        name: "Del",
+        age: 1,
+        active: true,
+        extras: {},
+        avatar: new Uint8Array(0),
+      },
+    }]);
+    const [d] = await store.delete(userSchema, ["data://users/del"]);
+    assertEquals(d.success, true);
+    const [[, rec]] = await store.read(userSchema, ["data://users/del"]);
+    assertEquals(rec, undefined);
+  },
+});
+
+Deno.test({
+  name:
+    "ElasticsearchStore (integration) - unsupported tags surface in EntitySupport",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const { store } = freshEntityStore();
+    const support = await store.ensureEntity({
+      name: "weird",
+      fields: [
+        { name: "ok", type: [TYPE_TAGS.STRING] },
+        { name: "money", type: ["some-protocol/money"] },
+      ],
+    });
+    assertEquals(support.supported, ["ok"]);
+    assertEquals(support.unsupported.map((u) => u.name), ["money"]);
+  },
 });
 
 // Cleanup: drop every index this test run created. Uses a wildcard
