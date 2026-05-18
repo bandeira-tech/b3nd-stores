@@ -13,7 +13,8 @@
 
 import { assertEquals } from "@std/assert";
 import { MemoryStore } from "../src/memory/store.ts";
-import { SimpleClient } from "../src/clients/simple-client.ts";
+import { mapToBytes, SaveClient } from "../src/clients/save-client.ts";
+import { BYTES_ENTITY } from "../src/entity.ts";
 import { Rig } from "@bandeira-tech/b3nd-core/rig";
 import { connection } from "@bandeira-tech/b3nd-core/rig";
 import type {
@@ -25,7 +26,9 @@ import type { Peer } from "@bandeira-tech/b3nd-core/network";
 import { JsonClient } from "./helpers/json-client.ts";
 
 function mem(): ProtocolInterfaceNode {
-  return new JsonClient(new SimpleClient(new MemoryStore()));
+  return new JsonClient(
+    new SaveClient(mapToBytes, BYTES_ENTITY, new MemoryStore()),
+  );
 }
 
 function recordingPeer(id: string): { peer: Peer; received: Message[] } {
@@ -267,7 +270,7 @@ Deno.test("tellAndRead.inbound: read miss on announcement yields nothing", async
 // ── End-to-end: A announces, B pulls via network() + connection() ────
 
 Deno.test("tellAndRead round-trip: A announces hash content, B pulls on demand", async () => {
-  // Two local nodes. A has a SimpleClient store that holds the full
+  // Two local nodes. A has a SaveClient store that holds the full
   // content. B runs a rig with tellAndRead wired up: its outbound
   // connection only announces, and its inbound network() pulls via
   // A's read() when it sees an announcement.

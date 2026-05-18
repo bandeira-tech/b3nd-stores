@@ -1,18 +1,20 @@
 /**
- * Store → `ProtocolInterfaceNode` adapter clients.
+ * Store → `ProtocolInterfaceNode` adapter.
  *
- * These are the canonical ways to put any `Store` behind the
- * `ProtocolInterfaceNode` interface so a Rig (or any other consumer
- * of `ProtocolInterfaceNode`) can talk to it.
+ * `SaveClient` is the single client this package exposes. It takes a
+ * `SaveMapper` (wire payload → `EntityRecord`), the target
+ * `EntitySchema`, and the backing store — read as "receive payloads
+ * X, map as Y, store on S". All three are explicit; the client does
+ * not invent defaults.
  *
- * - `SimpleClient` — bare wrapper. `receive` → `store.write`,
- *   `read` → `store.read`, `delete` → `store.delete`, `observe` via
- *   `ObserveEmitter`.
- * - `DataStoreClient` — `SimpleClient` plus envelope decomposition:
- *   accepts inline `{ inputs, outputs }` envelopes, performs the
- *   deletes-then-writes atomically (per backend), emits observe
- *   events grouped by program.
+ * Built-in mappers `mapToBytes` and `passThroughRecord` cover the
+ * common cases (opaque bytes via `BYTES_ENTITY`, already-shaped
+ * records via a custom schema).
  */
 
-export { SimpleClient } from "./simple-client.ts";
-export { DataStoreClient } from "./data-store-client.ts";
+export {
+  mapToBytes,
+  passThroughRecord,
+  SaveClient,
+  type SaveMapper,
+} from "./save-client.ts";

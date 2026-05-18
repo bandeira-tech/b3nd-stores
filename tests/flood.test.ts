@@ -10,7 +10,8 @@
 
 import { assertEquals, assertRejects } from "@std/assert";
 import { MemoryStore } from "../src/memory/store.ts";
-import { SimpleClient } from "../src/clients/simple-client.ts";
+import { mapToBytes, SaveClient } from "../src/clients/save-client.ts";
+import { BYTES_ENTITY } from "../src/entity.ts";
 import type {
   ProtocolInterfaceNode,
   StatusResult,
@@ -20,7 +21,9 @@ import { peer } from "@bandeira-tech/b3nd-core/network";
 import { JsonClient } from "./helpers/json-client.ts";
 
 function mem(): ProtocolInterfaceNode {
-  return new JsonClient(new SimpleClient(new MemoryStore()));
+  return new JsonClient(
+    new SaveClient(mapToBytes, BYTES_ENTITY, new MemoryStore()),
+  );
 }
 
 // ── validation ──────────────────────────────────────────────────────

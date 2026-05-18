@@ -2,7 +2,7 @@
  * IndexedDB backend for b3nd.
  *
  * Browser IndexedDB Store implementation. Pure mechanical storage
- * with no protocol awareness — wrap with MessageDataClient or SimpleClient
+ * with no protocol awareness — wrap with SaveClient
  * for NodeProtocolInterface.
  */
 
