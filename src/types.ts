@@ -15,7 +15,7 @@
  * return `Uint8Array` on read. Backends with native streaming
  * (filesystem, S3, IPFS) keep streams end-to-end.
  *
- * Cross-cutting types (`Output`, `Message`, `ProtocolInterfaceNode`,
+ * Cross-cutting types (`Output`, `ProtocolInterfaceNode`,
  * `DeleteResult`, `StatusResult`) still come from b3nd-core.
  */
 

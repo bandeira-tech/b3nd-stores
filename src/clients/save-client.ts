@@ -11,7 +11,8 @@
  * of the package's backends migrate to `EntityStore` — byte is the
  * lingua franca, structured entities are an opt-in.
  *
- * Wire shape (a `Message` is `[uri, payload | null]`):
+ * Wire shape (an `Output` is `[uri, payload]`; we accept `null` as the
+ * delete-by-convention payload):
  *
  * - `BYTES_ENTITY` target: `payload` is `Uint8Array | ReadableStream<Uint8Array>`.
  *   Writes wrap into `{ payload: bytes }`; reads unwrap back to bytes.
@@ -26,7 +27,6 @@
  */
 
 import type {
-  Message,
   Output,
   ProtocolInterfaceNode,
   ReceiveResult,
@@ -113,7 +113,7 @@ export class SaveClient extends ObserveEmitter
   }
 
   async receive(
-    msgs: Message<EntityRecord | StorePayload | null>[],
+    msgs: Output<EntityRecord | StorePayload | null>[],
   ): Promise<ReceiveResult[]> {
     await this.init();
     const target = this.target;
@@ -126,7 +126,7 @@ export class SaveClient extends ObserveEmitter
     for (let i = 0; i < msgs.length; i++) {
       const [uri, payload] = msgs[i];
       if (!uri || typeof uri !== "string") {
-        results[i] = { accepted: false, error: "Message URI is required" };
+        results[i] = { accepted: false, error: "URI is required" };
         continue;
       }
       if (payload === null) deletes.push({ uri, index: i });
