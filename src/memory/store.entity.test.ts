@@ -175,7 +175,7 @@ Deno.test("MemoryStore.write(schema, …) auto-ensures on first use", async () =
 
 // ── Status ────────────────────────────────────────────────────────
 
-Deno.test("MemoryStore.status - lists byte programs and ensured entities", async () => {
+Deno.test("MemoryStore.status - lists every ensured entity", async () => {
   const store = new MemoryStore();
   await store.ensureEntity(BYTES_ENTITY);
   await store.write(BYTES_ENTITY, [{
@@ -184,6 +184,6 @@ Deno.test("MemoryStore.status - lists byte programs and ensured entities", async
   }]);
   await store.ensureEntity(userSchema);
   const s = await store.status();
-  assert((s.schema ?? []).includes("mutable://app"));
+  assert((s.schema ?? []).includes("entity:bytes"));
   assert((s.schema ?? []).includes("entity:users"));
 });

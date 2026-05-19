@@ -23,16 +23,19 @@ Deno.test("MemoryStore - capabilities shape", () => {
 });
 
 Deno.test("MemoryStore - per-entry failure carries structured error with uri", async () => {
-  // A malformed URI trips URL.parse and throws inside the bytes write
-  // path; the other entries still succeed (atomicBatch: false).
+  // A non-bytes payload on a `bytes`-tagged field throws inside the
+  // normalisation step; other entries still succeed (atomicBatch: false).
   const store = new MemoryStore();
   await store.ensureEntity(BYTES_ENTITY);
   const results = await store.write(BYTES_ENTITY, [
     { uri: "store://app/good", record: { payload: new Uint8Array([1]) } },
-    { uri: "not-a-url", record: { payload: new Uint8Array([2]) } },
+    {
+      uri: "store://app/bad",
+      record: { payload: "not bytes" as unknown as Uint8Array },
+    },
   ]);
   assertEquals(results[0].success, true);
   assertEquals(results[1].success, false);
   assertEquals(results[1].errorDetail?.code, "STORAGE_ERROR");
-  assertEquals(results[1].errorDetail?.uri, "not-a-url");
+  assertEquals(results[1].errorDetail?.uri, "store://app/bad");
 });
