@@ -245,7 +245,6 @@ export class MemoryStore implements EntityStore {
   capabilities(): StoreCapabilities {
     return { atomicBatch: false };
   }
-
 }
 
 /**

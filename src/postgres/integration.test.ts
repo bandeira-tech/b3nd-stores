@@ -14,11 +14,7 @@ import { assert, assertEquals } from "@std/assert";
 import { Client } from "pg";
 import { runSharedStoreSuite } from "../../tests/runners/shared-store-suite.ts";
 import { PostgresStore } from "./store.ts";
-import {
-  type EntityRecord,
-  type EntitySchema,
-  TYPE_TAGS,
-} from "../entity.ts";
+import { type EntityRecord, type EntitySchema, TYPE_TAGS } from "../entity.ts";
 import type { SqlExecutor, SqlExecutorResult } from "./mod.ts";
 
 const TABLE_PREFIX = "inttest";

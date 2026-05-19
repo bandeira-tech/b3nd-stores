@@ -32,11 +32,7 @@ import { storageFailure } from "../errors.ts";
 import { toBytes } from "../payload.ts";
 import { validateReadParams } from "../read.ts";
 import type { EntityStore } from "../entity-store.ts";
-import type {
-  EntityRecord,
-  EntitySchema,
-  EntitySupport,
-} from "../entity.ts";
+import type { EntityRecord, EntitySchema, EntitySupport } from "../entity.ts";
 import type { StoreCapabilities, StoreWriteResult } from "../types.ts";
 import { type ColumnPlan, planColumns } from "./columns.ts";
 import type { SqlExecutor } from "./mod.ts";
